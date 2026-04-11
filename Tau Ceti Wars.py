@@ -5,7 +5,6 @@ import pygame
 import game_template
 from OpenGL.GL import *
 from OpenGL.GLU import *
-from OpenGL.error import GLError
 from pygame.locals import *
 
 # Módulos novos
@@ -77,6 +76,20 @@ def main():
     def cb_voltar_menu():
         nonlocal app_state
         app_state = "MENU_INICIAL"
+
+    def desbloquear_proximo_planeta(planeta_concluido):
+        for index, planet in enumerate(star_system):
+            if planet.name != planeta_concluido:
+                continue
+
+            if index + 1 < len(star_system):
+                proximo_planeta = star_system[index + 1]
+                if not proximo_planeta.is_unlocked:
+                    proximo_planeta.is_unlocked = True
+                    print(f"\nNovo planeta desbloqueado: {proximo_planeta.name}")
+            else:
+                print("\nTodos os planetas ja foram desbloqueados.")
+            return
 
     # Criando botões do Menu Inicial
     button_color = (0, 0, 0, 0)
@@ -160,7 +173,7 @@ def main():
             planet.splash_texture_id = load_background(splash_path, screen_width, screen_height)
 
     # caminho da textura do anel
-    ring_image_path = os.path.join(pasta_texturas, 'Anel.png')
+    ring_image_path = os.path.join(pasta_texturas, 'anel.png')
 
     ring_texture_id = load_texture(ring_image_path)
 
@@ -196,9 +209,6 @@ def main():
     # progresso linear: desbloqueia apenas o primeiro planeta inicialmente
     if star_system:
         star_system[0].is_unlocked = True
-    for planet in star_system:
-        if planet.name == "Arago":
-            planet.is_unlocked = True
 
     # variaveis de controle de camera
     cam_x, cam_y, cam_z = 0.0, 0.0, -50.0
@@ -313,6 +323,8 @@ def main():
                 
                 # chama a fase escolhida
                 resultado_fase = game_template.start(target_planet.name)
+                if resultado_fase == "VITORIA":
+                    desbloquear_proximo_planeta(target_planet.name)
                 
                 # retorno da fase para menu
                 print(f"\nFase concluída: {target_planet.name}!")
@@ -326,6 +338,7 @@ def main():
                 transition_state = "IDLE"
                 fade_alpha = 0.0
                 target_planet = None
+                focused_planet = None
                 cam_x, cam_y, cam_z = 0.0, 0.0, -50.0
                 
                 # destrava o mouse
@@ -377,7 +390,7 @@ def main():
                         distance = math.hypot(mouse_pos[0] - win_x, mouse_pos[1] - win_y_inverted)
                         if distance < screen_radius:
                             focused_planet = planet
-                    except (ValueError, GLError):
+                    except (ValueError, GLUerror):
                         pass 
 
                 glPushMatrix() 
