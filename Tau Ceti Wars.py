@@ -5,6 +5,7 @@ import pygame
 import game_template
 from OpenGL.GL import *
 from OpenGL.GLU import *
+from OpenGL.error import GLError
 from pygame.locals import *
 
 # Módulos novos
@@ -86,7 +87,7 @@ def main():
     title_main = Title(
         screen_width // 2 - 300, screen_height // 2 - 250, 600, 100,
         "TAU CETI WARS", fonte_titulo, bg_color=(0, 0, 0, 0),
-        text_color=(255, 255, 255, 0), align="center"
+        text_color=(255, 255, 255, 255), align="center"
     )
 
     btn_start = Button(
@@ -159,7 +160,7 @@ def main():
             planet.splash_texture_id = load_background(splash_path, screen_width, screen_height)
 
     # caminho da textura do anel
-    ring_image_path = os.path.join(pasta_texturas, 'anel.png')
+    ring_image_path = os.path.join(pasta_texturas, 'Anel.png')
 
     ring_texture_id = load_texture(ring_image_path)
 
@@ -195,6 +196,9 @@ def main():
     # progresso linear: desbloqueia apenas o primeiro planeta inicialmente
     if star_system:
         star_system[0].is_unlocked = True
+    for planet in star_system:
+        if planet.name == "Arago":
+            planet.is_unlocked = True
 
     # variaveis de controle de camera
     cam_x, cam_y, cam_z = 0.0, 0.0, -50.0
@@ -211,6 +215,7 @@ def main():
 
     # variável de controle do loop de jogo
     running = True
+    focused_planet = None
 
     while running:
 
@@ -220,7 +225,7 @@ def main():
             if evento.type == pygame.QUIT:
                 running = False
             
-            i# --- LÓGICA DE EVENTOS POR ESTADO ---
+            # --- LÓGICA DE EVENTOS POR ESTADO ---
             if app_state == "MENU_INICIAL":
                 btn_start.handle_event(evento)
                 btn_exit_main.handle_event(evento)
@@ -372,7 +377,7 @@ def main():
                         distance = math.hypot(mouse_pos[0] - win_x, mouse_pos[1] - win_y_inverted)
                         if distance < screen_radius:
                             focused_planet = planet
-                    except (ValueError, OpenGL.GLU.GLUerror):
+                    except (ValueError, GLError):
                         pass 
 
                 glPushMatrix() 
