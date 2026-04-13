@@ -548,33 +548,33 @@ def get_creature_profile(items_collected):
     if items_collected <= 2:
         return {
             "state": state,
-            "speed": 0.045,
-            "awareness_radius": BLOCK_SIZE * 3.0,
-            "path_refresh_ms": 700,
+            "speed": 0.07,
+            "awareness_radius": BLOCK_SIZE * 4.0,
+            "path_refresh_ms": 520,
             "spawn_delay_ms": 2500,
         }
     if items_collected <= 4:
         return {
             "state": state,
-            "speed": 0.07,
-            "awareness_radius": BLOCK_SIZE * 5.0,
-            "path_refresh_ms": 520,
-            "spawn_delay_ms": 1400,
+            "speed": 0.11,
+            "awareness_radius": BLOCK_SIZE * 7.0,
+            "path_refresh_ms": 300,
+            "spawn_delay_ms": 1000,
         }
     if items_collected <= 6:
         return {
             "state": state,
-            "speed": 0.095,
-            "awareness_radius": BLOCK_SIZE * 7.0,
-            "path_refresh_ms": 360,
-            "spawn_delay_ms": 700,
+            "speed": 0.16,
+            "awareness_radius": BLOCK_SIZE * 12.0,
+            "path_refresh_ms": 180,
+            "spawn_delay_ms": 450,
         }
     return {
         "state": state,
-        "speed": 0.125,
+        "speed": 0.22,
         "awareness_radius": BLOCK_SIZE * 99.0,
-        "path_refresh_ms": 220,
-        "spawn_delay_ms": 250,
+        "path_refresh_ms": 90,
+        "spawn_delay_ms": 120,
     }
 
 
@@ -670,6 +670,17 @@ def start(planet_name):
     mouse_sensitivity = 0.15
     move_speed = 0.15
     player_radius = 0.5
+    sprint_multiplier = 1.8
+    max_stamina = 100.0
+    stamina = max_stamina
+    stamina_drain_per_second = 26.0
+    stamina_recover_per_second = 18.0
+    min_stamina_to_sprint = 10.0
+    sprint_recover_threshold = 35.0
+    stamina_recovery_delay = 1.4
+    exhausted = False
+    stamina_recovery_timer = 0.0
+    sprinting = False
 
     item_candidate_positions = []
     exit_position = None
@@ -712,6 +723,8 @@ def start(planet_name):
     creature_target_position = creature_spawn if creature_spawn else (cam_x, cam_z)
     last_creature_state = creature_state
     next_danger_sound_time = 0
+    delta_seconds = 1.0 / fps
+    previous_player_position = (cam_x, cam_z)
 
     running = True
 
@@ -775,22 +788,45 @@ def start(planet_name):
         front_z = -math.cos(yaw_rad)
         right_x = math.cos(yaw_rad)
         right_z = math.sin(yaw_rad)
+        is_moving = keys[K_w] or keys[K_s] or keys[K_a] or keys[K_d]
+        wants_to_sprint = keys[K_LSHIFT] or keys[K_RSHIFT]
+
+        if exhausted and stamina >= sprint_recover_threshold:
+            exhausted = False
+
+        can_start_sprint = wants_to_sprint and is_moving and not exhausted and stamina > min_stamina_to_sprint
+        can_continue_sprint = wants_to_sprint and is_moving and not exhausted and sprinting and stamina > 0.0
+        can_sprint = can_continue_sprint or can_start_sprint
+        sprinting = can_sprint
+        current_move_speed = move_speed * sprint_multiplier if can_sprint else move_speed
+
+        if can_sprint:
+            stamina = max(0.0, stamina - (stamina_drain_per_second * delta_seconds))
+            if stamina <= 0.0:
+                exhausted = True
+                stamina_recovery_timer = stamina_recovery_delay
+                sprinting = False
+        else:
+            if stamina_recovery_timer > 0.0:
+                stamina_recovery_timer = max(0.0, stamina_recovery_timer - delta_seconds)
+            else:
+                stamina = min(max_stamina, stamina + (stamina_recover_per_second * delta_seconds))
 
         next_x = cam_x
         next_z = cam_z
 
         if keys[K_w]:
-            next_x += front_x * move_speed
-            next_z += front_z * move_speed
+            next_x += front_x * current_move_speed
+            next_z += front_z * current_move_speed
         if keys[K_s]:
-            next_x -= front_x * move_speed
-            next_z -= front_z * move_speed
+            next_x -= front_x * current_move_speed
+            next_z -= front_z * current_move_speed
         if keys[K_a]:
-            next_x -= right_x * move_speed
-            next_z -= right_z * move_speed
+            next_x -= right_x * current_move_speed
+            next_z -= right_z * current_move_speed
         if keys[K_d]:
-            next_x += right_x * move_speed
-            next_z += right_z * move_speed
+            next_x += right_x * current_move_speed
+            next_z += right_z * current_move_speed
 
         if not is_wall(next_x + (player_radius if next_x > cam_x else -player_radius), cam_z, current_map):
             cam_x = next_x
@@ -825,7 +861,13 @@ def start(planet_name):
                 next_danger_sound_time = now + max(550, 1300 - (items_collected * 110))
 
             if should_chase_player:
-                creature_target_position = player_position
+                player_velocity_x = player_position[0] - previous_player_position[0]
+                player_velocity_z = player_position[1] - previous_player_position[1]
+                predictive_distance = BLOCK_SIZE * min(2.6, 1.0 + (items_collected * 0.22))
+                creature_target_position = (
+                    player_position[0] + (front_x * predictive_distance) + (player_velocity_x * 8.0),
+                    player_position[1] + (front_z * predictive_distance) + (player_velocity_z * 8.0),
+                )
             else:
                 if remaining_items:
                     creature_target_position = min(
@@ -837,6 +879,9 @@ def start(planet_name):
 
             if now >= next_path_refresh:
                 creature_path = find_path(current_map, (creature_x, creature_z), creature_target_position)
+                if not creature_path and should_chase_player:
+                    creature_path = find_path(current_map, (creature_x, creature_z), player_position)
+                    creature_target_position = player_position
                 next_path_refresh = now + creature_profile["path_refresh_ms"]
 
             target_x, target_z = creature_target_position
@@ -864,6 +909,8 @@ def start(planet_name):
                 running = False
         elif items_collected > 0 and creature_spawn and creature_visible and now < creature_wake_time:
             status_message = "Voce ouviu algo se movendo pelos corredores."
+
+        previous_player_position = player_position
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glLoadIdentity()
@@ -925,6 +972,13 @@ def start(planet_name):
             hud_lines.append((f"Objetivo atual: {current_objective}", (255, 215, 120)))
             hud_lines.append((f"Itens coletados: {items_collected}/{TOTAL_ARAGO_ITEMS}", get_collect_progress_color(items_collected)))
             hud_lines.append((format_mission_status_line("Saida", exit_unlocked), get_status_color(exit_unlocked)))
+            stamina_color = (255, 95, 95) if exhausted else get_status_color(stamina > 35.0)
+            hud_lines.append((f"Estamina: {int(stamina)}/{int(max_stamina)}", stamina_color))
+            hud_lines.append(("Shift para correr", (190, 220, 255)))
+            if stamina_recovery_timer > 0.0:
+                hud_lines.append(("Exausto: recuperando folego...", (255, 95, 95)))
+            elif exhausted:
+                hud_lines.append(("Exausto: espere a estamina recarregar.", (255, 95, 95)))
             if items_collected <= 0:
                 creature_line = "Criatura: adormecida"
                 creature_color = (180, 180, 180)
@@ -954,7 +1008,7 @@ def start(planet_name):
         draw_hud(screen_width, screen_height, hud_font, hud_lines)
 
         pygame.display.flip()
-        clock.tick(fps)
+        delta_seconds = clock.tick(fps) / 1000.0
 
         if result_state == "VITORIA" and pygame.time.get_ticks() >= exit_timer:
             running = False
