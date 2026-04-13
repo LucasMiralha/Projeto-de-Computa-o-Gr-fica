@@ -519,6 +519,46 @@ def find_path(level_map, start_pos, target_pos):
     return path
 
 
+def get_walkable_neighbors(level_map, row, col):
+    neighbors = []
+    for delta_row, delta_col in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        next_row = row + delta_row
+        next_col = col + delta_col
+        if is_walkable_cell(level_map, next_row, next_col):
+            neighbors.append((next_row, next_col))
+    return neighbors
+
+
+def is_intersection(level_map, row, col):
+    return len(get_walkable_neighbors(level_map, row, col)) >= 3
+
+
+def get_intersection_cutoff_target(level_map, player_position, creature_position, fallback_target):
+    path_to_player = find_path(level_map, creature_position, player_position)
+    if len(path_to_player) < 4:
+        return fallback_target
+
+    best_target = None
+    best_score = None
+    max_index = min(len(path_to_player), 12)
+
+    for row, col in path_to_player[2:max_index]:
+        if not is_intersection(level_map, row, col):
+            continue
+        candidate_target = cell_to_world(row, col)
+        player_to_candidate = find_path(level_map, player_position, candidate_target)
+        creature_to_candidate = find_path(level_map, creature_position, candidate_target)
+        if not player_to_candidate or not creature_to_candidate:
+            continue
+
+        score = len(player_to_candidate) - len(creature_to_candidate)
+        if score > 0 and (best_score is None or score > best_score):
+            best_target = candidate_target
+            best_score = score
+
+    return best_target if best_target else fallback_target
+
+
 def get_creature_state(items_collected):
     if items_collected <= 0:
         return "Adormecida"
@@ -863,11 +903,21 @@ def start(planet_name):
             if should_chase_player:
                 player_velocity_x = player_position[0] - previous_player_position[0]
                 player_velocity_z = player_position[1] - previous_player_position[1]
-                predictive_distance = BLOCK_SIZE * min(2.6, 1.0 + (items_collected * 0.22))
-                creature_target_position = (
-                    player_position[0] + (front_x * predictive_distance) + (player_velocity_x * 8.0),
-                    player_position[1] + (front_z * predictive_distance) + (player_velocity_z * 8.0),
+                velocity_length = math.hypot(player_velocity_x, player_velocity_z)
+                predictive_scale = min(BLOCK_SIZE * 1.25, velocity_length * 10.0)
+                predicted_target = (
+                    player_position[0] + (player_velocity_x * predictive_scale),
+                    player_position[1] + (player_velocity_z * predictive_scale),
                 )
+                if items_collected >= 4:
+                    creature_target_position = get_intersection_cutoff_target(
+                        current_map,
+                        player_position,
+                        (creature_x, creature_z),
+                        predicted_target,
+                    )
+                else:
+                    creature_target_position = predicted_target
             else:
                 if remaining_items:
                     creature_target_position = min(
