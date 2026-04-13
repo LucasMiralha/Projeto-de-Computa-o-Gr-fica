@@ -8,7 +8,146 @@
       "inclinacao_eixo": -23.5,
       "cor_ou_textura": "Alpine.png",
       "possui_aneis": false,
-      "splash_image": "tau_ceti_splash.png"
+      "splash_image": "tau_ceti_splash.png",
+      "level_name" : "tau_ceti_iv",
+      "layout": [
+        [
+          "PPPNPPPPPPPPPPPPPPPPPPPPP  ",
+          "P.......................P  ",
+          "P.......................P  ",
+          "PP....PPPPPPPPPP.....PPPP  ",
+          "P......P................P  ",
+          "P......P................P  ",
+          "P.......................P  ",
+          "P......P................P  ",
+          "P......P................P  ",
+          "P......P................P  ",
+          "P.PPPPP^PPPPPPPPPP.PPPPPP  ",
+          "P.....P.P...............P  ",
+          "P.....P.P...............P  ",
+          "P.....P.P...............P  ",
+          "P.....P.................P  ",
+          "P.....PPPPPPPPPPPP.PPPPPP  ",
+          "P..................P       ",
+          "PvPPPPPvPPPPPPPPPPPP       ",
+          "PPPPPPPPPPPPPPPPPPPP       "
+        ],
+        [
+          "                           ",
+          "...........................",
+          "PPPPPPPPPPPPPPPPPPPPPPPPPPP",
+          "P.P............P.P........P",
+          "P................P........P",
+          "P.P............P.P........P",
+          "P.PPPPPPPPPPPPPP.P........P",
+          "P.P............P.P........P",
+          "P.P............PvP........P",
+          "P.PPPPPPPPPPPPPPPPPPPPPPPPP",
+          "P.P...P.P..PAP...P........P",
+          "P.P...P.P.................P",
+          "P.P...P.V..P.P...P........P",
+          "P.P...P.V..P.P...P........P",
+          "P.P...P.V..P.>PPPP........P",
+          "P.P...P.V..P.P...P........P",
+          "P.P...P.PM................P",
+          "P.P...P.P..P@P...P........P",
+          "PPPPPPPPPPPPSPPPPPPPPPPPPPP",
+          "                           "
+        ],
+        [
+          "PPPPPPPPPPPPPPPPPPPPP",
+          "P................>P.P",
+          "P.PPVVVVVVVVVVPPPPP.P",
+          "P.P            P....P",
+          "P.P            P....P",
+          "P.P            P....P",
+          "P.PPVVVVVVVVVVPPPP..P",
+          "P.P..............P..P",
+          "P................P..P",
+          "PPPPP.PPPPP.PP.PPP..P",
+          "P...P.P...P.P...P...P",
+          "P...P.P...P.....L...P",
+          "P...P.P...P.P...P...P",
+          "P...P.P...P.PPPPP...P",
+          "P...P.....P...P.....P",
+          "P...P.PP.PP.PP......P",
+          "P...P.......P.......P",
+          "P...P.P...P.P.......P",
+          "PPPPPPPPPPPPPPPPPPPPP",
+          "                    P",
+          "                    P",
+          "                    P",
+          "                    P",
+          "                    P",
+          "                    P",
+          "                    P",
+          "                    P",
+          "                    P",
+          "                    P"
+        ],
+        [
+          "PPPPPPPPPPPPPPPPPPPPP",
+          "P.................P.P",
+          "P.PPPPPP.PPPPPP.PPPPP",
+          "P.P....P.P....P.P...P",
+          "P.P....P.P....P.....P",
+          "P.P...........P.P...P",
+          "P.P....P.P....P.PP.PP",
+          "P.P....P.P....P.P...P",
+          "P.P....P.P....P.....P",
+          "P......P.PP.PPPPPP.PP",
+          "P.P....P....P.......P",
+          "P.PPPPPP....P.......P",
+          "P.P....P............P",
+          "P.P....P....P.......P",
+          "P.P.........P.......P",
+          "P.P....PPPP.P.......P",
+          "P.P....P....P.......P",
+          "O......P....PPPPPPPPP",
+          "P.P....PPPP.P.......P",
+          "P.PPPPP...P.P.......P",
+          "P.P.......P.........P",
+          "P.P.........P.......P",
+          "P.PPPPPPPPP.P.......P",
+          "P.P.......P.P.......P",
+          "P.P.......P.P.......P",
+          "P...........PPPPPPPPP",
+          "P.PPPPPPPPP.P.......P",
+          "P...................P",
+          "PPPPPPPPPPPPPPPPPPPPP"
+        ],
+        [
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          ".....................",
+          "....................."
+        ]
+      ]
     },
     {
       "nome": "Esteves",
@@ -17,7 +156,19 @@
       "inclinacao_eixo": -26.7,
       "cor_ou_textura": "Gaseous4.png",
       "possui_aneis": true,
-      "splash_image": "esteves_splash.png"
+      "splash_image": "esteves_splash.png",
+      "level_name" : "esteves",
+      "layout": [
+        [
+          "PPPPPPPPPP",
+          "P@.......P",
+          "PPPP..PPPP",
+          "P........P",
+          "P.PPPPPP.P",
+          "P........P",
+          "PPPPPPPPPP"
+        ]
+      ]
     },
     {
       "nome": "Vendas",
@@ -26,7 +177,19 @@
       "inclinacao_eixo": -21.6,
       "cor_ou_textura": "Martian.png", 
       "possui_aneis": false,
-      "splash_image": "splash.png"
+      "splash_image": "splash.png",
+      "level_name" : "vendas",
+      "layout": [
+        [
+          "PPPPPPPPPP",
+          "P@.......P",
+          "PPPP..PPPP",
+          "P........P",
+          "P.PPPPPP.P",
+          "P........P",
+          "PPPPPPPPPP"
+        ]
+      ]
     },
     {
       "nome": "Arago",
@@ -35,7 +198,9 @@
       "inclinacao_eixo": -20.5,
       "cor_ou_textura": "Volcanic.png", 
       "possui_aneis": false,
-      "splash_image": "aragon.jpg"
+      "splash_image": "splash.png",
+      "level_name" : "arago",
+      "layout": "random"
     },
     {
       "nome": "Regis",
@@ -44,7 +209,19 @@
       "inclinacao_eixo": -15.5,
       "cor_ou_textura": "Tropical.png", 
       "possui_aneis": true,
-      "splash_image": "splash.png"
+      "splash_image": "splash.png",
+      "level_name" : "regis",
+      "layout": [
+        [
+          "PPPPPPPPPP",
+          "P@.......P",
+          "PPPP..PPPP",
+          "P........P",
+          "P.PPPPPP.P",
+          "P........P",
+          "PPPPPPPPPP"
+        ]
+      ]
     }
   ]
 }
