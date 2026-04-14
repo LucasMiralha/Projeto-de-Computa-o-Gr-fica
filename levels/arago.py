@@ -1,4 +1,5 @@
 import math
+import os
 import random
 import sys
 from array import array
@@ -9,7 +10,8 @@ from OpenGL.GL import *
 from OpenGL.GLU import *
 from pygame.locals import *
 
-from core.renderer import draw_cube, draw_floor_tile, draw_u_stairs, draw_computer, draw_collectible, draw_exit_module, draw_creature
+from core.graphics_utils import load_texture
+from core.renderer import draw_cube, draw_floor_tile, draw_u_stairs, draw_computer, draw_alien_crystal, draw_exit_module, draw_creature, draw_textured_cube, draw_textured_floor_tile
 from core.physics_engine import (BLOCK_SIZE, WALL_HEIGHT, is_wall, 
                                  has_ramp_below, get_target_y)
 from core.ui import Button, Title
@@ -24,9 +26,9 @@ ARAGO_MAP_HEIGHT = 25
 
 LEVEL_COLORS = {
     "Arago": {
-        "wall": (0.30, 0.12, 0.08),
-        "floor": (0.16, 0.07, 0.05),
-        "ceiling": (0.08, 0.03, 0.02),
+        "wall": (0.10, 0.04, 0.03),
+        "floor": (0.05, 0.03, 0.02),
+        "ceiling": (0.03, 0.03, 0.04),
         "item_body": (0.22, 0.12, 0.08),
         "item_glow": (0.95, 0.92, 0.55),
         "exit_locked": (0.45, 0.08, 0.08),
@@ -134,6 +136,67 @@ def draw_hud(width, height, font, lines):
     glDeleteTextures([texture_id])
 
 
+def draw_flashlight_overlay(width, height, pulse_time):
+    overlay = pygame.Surface((width, height), pygame.SRCALPHA)
+    center_x = width // 2
+    center_y = int(height * 0.54)
+    outer_radius = max(95, min(width, height) // 8)
+    beam_offset = int(math.sin(pulse_time * 0.0018) * 4)
+
+    pygame.draw.rect(overlay, (0, 0, 0, 210), (0, 0, width, height))
+
+    flashlight_center = (center_x, center_y + beam_offset)
+    for step in range(12, 0, -1):
+        radius = int(outer_radius * (step / 12.0))
+        alpha = int(3 + (step * 2))
+        pygame.draw.circle(
+            overlay,
+            (255, 244, 220, alpha),
+            flashlight_center,
+            radius,
+        )
+
+    overlay_data = pygame.image.tostring(overlay, "RGBA", True)
+    texture_id = glGenTextures(1)
+
+    glMatrixMode(GL_PROJECTION)
+    glPushMatrix()
+    glLoadIdentity()
+    glOrtho(0, width, height, 0, -1, 1)
+
+    glMatrixMode(GL_MODELVIEW)
+    glPushMatrix()
+    glLoadIdentity()
+
+    glDisable(GL_DEPTH_TEST)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    glEnable(GL_TEXTURE_2D)
+    glBindTexture(GL_TEXTURE_2D, texture_id)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, overlay_data)
+    glColor4f(1.0, 1.0, 1.0, 1.0)
+
+    glBegin(GL_QUADS)
+    glTexCoord2f(0.0, 1.0); glVertex2f(0, 0)
+    glTexCoord2f(1.0, 1.0); glVertex2f(width, 0)
+    glTexCoord2f(1.0, 0.0); glVertex2f(width, height)
+    glTexCoord2f(0.0, 0.0); glVertex2f(0, height)
+    glEnd()
+
+    glDisable(GL_TEXTURE_2D)
+    glDisable(GL_BLEND)
+    glEnable(GL_DEPTH_TEST)
+
+    glMatrixMode(GL_PROJECTION)
+    glPopMatrix()
+    glMatrixMode(GL_MODELVIEW)
+    glPopMatrix()
+
+    glDeleteTextures([texture_id])
+
+
 def create_tone_sound(frequencies, duration_ms, volume=0.35, sample_rate=22050):
     sample_count = max(1, int(sample_rate * (duration_ms / 1000.0)))
     fade_samples = max(1, int(sample_count * 0.08))
@@ -165,6 +228,38 @@ def create_tone_sound(frequencies, duration_ms, volume=0.35, sample_rate=22050):
 def play_sound(sound_enabled, sounds, name):
     if sound_enabled and name in sounds and sounds[name]:
         sounds[name].play()
+
+
+def load_sound(sound_path, volume=0.35):
+    sound = pygame.mixer.Sound(sound_path)
+    sound.set_volume(volume)
+    return sound
+
+
+def speed_up_sound(sound, speed_multiplier=1.35, volume=0.35, channels=2):
+    if speed_multiplier <= 1.0:
+        sound.set_volume(volume)
+        return sound
+
+    raw_samples = array("h")
+    raw_samples.frombytes(sound.get_raw())
+    if not raw_samples:
+        sound.set_volume(volume)
+        return sound
+
+    total_frames = len(raw_samples) // channels
+    accelerated_samples = array("h")
+    frame_index = 0.0
+
+    while int(frame_index) < total_frames:
+        source_frame = int(frame_index) * channels
+        for channel_index in range(channels):
+            accelerated_samples.append(raw_samples[source_frame + channel_index])
+        frame_index += speed_multiplier
+
+    accelerated_sound = pygame.mixer.Sound(buffer=accelerated_samples.tobytes())
+    accelerated_sound.set_volume(volume)
+    return accelerated_sound
 
 
 def is_wall(x, z, level_map):
@@ -525,17 +620,49 @@ def start(planet, saved_state=None):
     hud_font = pygame.font.SysFont("consolas", 24)
     sound_enabled = True
     sounds = {}
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sounds_path = os.path.join(project_root, "Assets", "Sounds")
+    planet_textures_path = os.path.join(project_root, "Assets", "Planet Textures")
+    custom_textures_path = os.path.join(project_root, "Assets", "texturas")
+    environment_textures = {
+        "wall": None,
+        "floor": None,
+        "ceiling": None,
+    }
 
     try:
         if not pygame.mixer.get_init():
             pygame.mixer.init(frequency=22050, size=-16, channels=2)
-        sounds["collect"] = create_tone_sound([660, 880], 180, volume=0.28)
+        pygame.mixer.set_num_channels(16)
+        pygame.mixer.set_reserved(3)
+        collect_sound_path = os.path.join(sounds_path, "som_item.mp3")
+        if os.path.exists(collect_sound_path):
+            sounds["collect"] = load_sound(collect_sound_path, volume=0.34)
+        else:
+            sounds["collect"] = create_tone_sound([660, 880], 180, volume=0.28)
         sounds["wake"] = create_tone_sound([150, 180, 210], 420, volume=0.35)
         sounds["unlock"] = create_tone_sound([520, 660, 820], 320, volume=0.3)
         sounds["blocked"] = create_tone_sound([160, 120], 240, volume=0.3)
         sounds["victory"] = create_tone_sound([440, 554, 660], 520, volume=0.32)
         sounds["danger"] = create_tone_sound([260, 220], 260, volume=0.26)
         sounds["defeat"] = create_tone_sound([220, 165, 110], 700, volume=0.4)
+        sounds["footstep"] = load_sound(os.path.join(sounds_path, "passos_arago.mp3"), volume=0.32)
+        sounds["footstep_sprint"] = speed_up_sound(sounds["footstep"], speed_multiplier=1.45, volume=0.36)
+        heart_sound_path = os.path.join(sounds_path, "coracao.mp3")
+        if os.path.exists(heart_sound_path):
+            sounds["heart"] = load_sound(heart_sound_path, volume=0.22)
+            sounds["heart_mid"] = speed_up_sound(sounds["heart"], speed_multiplier=1.18, volume=0.28)
+            sounds["heart_fast"] = speed_up_sound(sounds["heart"], speed_multiplier=1.35, volume=0.34)
+        robot_sound_path = os.path.join(sounds_path, "robot_noise.mp3")
+        if os.path.exists(robot_sound_path):
+            sounds["robot_chase"] = load_sound(robot_sound_path, volume=0.26)
+
+        wall_texture_path = os.path.join(custom_textures_path, "parede_arago.png")
+        floor_texture_path = os.path.join(custom_textures_path, "chao_arago.png")
+        ceiling_texture_path = os.path.join(custom_textures_path, "teto_arago.png")
+        environment_textures["wall"] = load_texture(wall_texture_path)
+        environment_textures["floor"] = load_texture(floor_texture_path)
+        environment_textures["ceiling"] = load_texture(ceiling_texture_path)
     except pygame.error:
         sound_enabled = False
 
@@ -622,8 +749,27 @@ def start(planet, saved_state=None):
     creature_target_position = creature_spawn if creature_spawn else (cam_x, cam_z)
     last_creature_state = creature_state
     next_danger_sound_time = 0
+    footstep_channel = pygame.mixer.Channel(1) if sound_enabled else None
+    item_channel = pygame.mixer.Channel(0) if sound_enabled else None
+    heart_channel = pygame.mixer.Channel(2) if sound_enabled else None
+    robot_channel = pygame.mixer.Channel(3) if sound_enabled else None
+    current_footstep_name = None
+    current_heart_name = None
+    robot_chase_active = False
+    pending_wake_sound_time = 0
     delta_seconds = 1.0 / fps
     previous_player_position = (cam_x, cam_z)
+
+    def stop_level_audio():
+        nonlocal current_footstep_name, current_heart_name, pending_wake_sound_time
+        nonlocal robot_chase_active
+        for channel in (item_channel, footstep_channel, heart_channel, robot_channel):
+            if channel and channel.get_busy():
+                channel.stop()
+        current_footstep_name = None
+        current_heart_name = None
+        robot_chase_active = False
+        pending_wake_sound_time = 0
 
     # Restauração completa do estado salvo
     if saved_state:
@@ -697,15 +843,18 @@ def start(planet, saved_state=None):
 
     def cb_carregar_jogo():
         nonlocal running, result_state
+        stop_level_audio()
         result_state = "LOAD_GAME"
         running = False
 
     def cb_voltar_menu():
         nonlocal running, result_state
+        stop_level_audio()
         result_state = "MENU"
         running = False
 
     def cb_sair_desktop():
+        stop_level_audio()
         pygame.quit()
         sys.exit()
 
@@ -737,6 +886,7 @@ def start(planet, saved_state=None):
     
     def cb_restart_level():
         nonlocal running, result_state
+        stop_level_audio()
         result_state = "RESTART"
         running = False
         
@@ -782,6 +932,7 @@ def start(planet, saved_state=None):
 
         for event in pygame.event.get():
             if event.type == QUIT:
+                stop_level_audio()
                 pygame.quit()
                 sys.exit()
 
@@ -800,17 +951,26 @@ def start(planet, saved_state=None):
 
             if event.type == KEYDOWN:
                 if event.key == K_ESCAPE:
+                    stop_level_audio()
                     running = False
                 elif event.key == K_e and planet.name == "Arago":
                     if near_item_position:
                         collected_items.add(near_item_position)
                         items_collected += 1
-                        play_sound(sound_enabled, sounds, "collect")
+                        if sound_enabled and "collect" in sounds:
+                            if item_channel:
+                                item_channel.stop()
+                                item_channel.play(sounds["collect"])
+                            else:
+                                play_sound(sound_enabled, sounds, "collect")
                         creature_profile = get_creature_profile(items_collected)
                         creature_state = creature_profile["state"]
                         creature_visible = True
                         creature_wake_time = pygame.time.get_ticks() + creature_profile["spawn_delay_ms"]
-                        play_sound(sound_enabled, sounds, "wake")
+                        collect_sound_duration_ms = 0
+                        if sound_enabled and "collect" in sounds:
+                            collect_sound_duration_ms = int(sounds["collect"].get_length() * 1000)
+                        pending_wake_sound_time = pygame.time.get_ticks() + max(220, collect_sound_duration_ms + 30)
                         remaining_count = TOTAL_ARAGO_ITEMS - items_collected
                         if remaining_count > 0:
                             status_message = f"Item coletado. Faltam {remaining_count} para liberar a saida."
@@ -848,6 +1008,10 @@ def start(planet, saved_state=None):
             # Pula a lógica de jogo, vai direto pra renderização
             pass
         else:
+            if pending_wake_sound_time and pygame.time.get_ticks() >= pending_wake_sound_time:
+                play_sound(sound_enabled, sounds, "wake")
+                pending_wake_sound_time = 0
+
             mouse_dx, mouse_dy = pygame.mouse.get_rel()
             yaw += mouse_dx * mouse_sensitivity
             pitch += mouse_dy * mouse_sensitivity
@@ -883,6 +1047,8 @@ def start(planet, saved_state=None):
                 else:
                     stamina = min(max_stamina, stamina + (stamina_recover_per_second * delta_seconds))
 
+            previous_cam_x = cam_x
+            previous_cam_z = cam_z
             next_x = cam_x
             next_z = cam_z
 
@@ -903,6 +1069,19 @@ def start(planet, saved_state=None):
                 cam_x = next_x
             if not is_wall(cam_x, next_z + (player_radius if next_z > cam_z else -player_radius), current_map):
                 cam_z = next_z
+
+            moved_distance = math.hypot(cam_x - previous_cam_x, cam_z - previous_cam_z)
+            if moved_distance > 0.01 and sound_enabled and "footstep" in sounds and footstep_channel:
+                desired_footstep_name = "footstep_sprint" if sprinting and "footstep_sprint" in sounds else "footstep"
+                desired_sound = sounds[desired_footstep_name]
+                if current_footstep_name != desired_footstep_name:
+                    footstep_channel.stop()
+                    current_footstep_name = desired_footstep_name
+                if not footstep_channel.get_busy():
+                    footstep_channel.play(desired_sound, loops=-1)
+            elif footstep_channel and footstep_channel.get_busy():
+                footstep_channel.stop()
+                current_footstep_name = None
 
             player_position = (cam_x, cam_z)
             remaining_items = [pos for pos in item_positions if pos not in collected_items]
@@ -927,9 +1106,43 @@ def start(planet, saved_state=None):
                     items_collected >= 5 or player_distance <= creature_profile["awareness_radius"]
                 )
 
+                if sound_enabled and heart_channel and "heart" in sounds:
+                    heart_trigger_distance = BLOCK_SIZE * 8.0
+                    if player_distance <= heart_trigger_distance:
+                        heart_level = 0
+                        if items_collected >= 5 or player_distance <= BLOCK_SIZE * 4.0:
+                            heart_level = 2
+                        elif items_collected >= 3 or player_distance <= BLOCK_SIZE * 6.0:
+                            heart_level = 1
+
+                        desired_heart_name = "heart"
+                        if heart_level == 1 and "heart_mid" in sounds:
+                            desired_heart_name = "heart_mid"
+                        elif heart_level == 2 and "heart_fast" in sounds:
+                            desired_heart_name = "heart_fast"
+
+                        if current_heart_name != desired_heart_name:
+                            heart_channel.stop()
+                            current_heart_name = desired_heart_name
+                        if not heart_channel.get_busy():
+                            heart_channel.play(sounds[desired_heart_name], loops=-1)
+                    elif heart_channel.get_busy():
+                        heart_channel.stop()
+                        current_heart_name = None
+
                 if should_chase_player and now >= next_danger_sound_time:
                     play_sound(sound_enabled, sounds, "danger")
                     next_danger_sound_time = now + max(550, 1300 - (items_collected * 110))
+
+                if sound_enabled and robot_channel and "robot_chase" in sounds:
+                    if should_chase_player:
+                        if not robot_chase_active:
+                            robot_channel.stop()
+                            robot_channel.play(sounds["robot_chase"], loops=-1)
+                            robot_chase_active = True
+                    elif robot_chase_active:
+                        robot_channel.stop()
+                        robot_chase_active = False
 
                 if should_chase_player:
                     player_velocity_x = player_position[0] - previous_player_position[0]
@@ -995,6 +1208,18 @@ def start(planet, saved_state=None):
                         pygame.event.set_grab(False)
             elif items_collected > 0 and creature_spawn and creature_visible and now < creature_wake_time:
                 status_message = "Voce ouviu algo se movendo pelos corredores."
+                if heart_channel and heart_channel.get_busy():
+                    heart_channel.stop()
+                    current_heart_name = None
+                if robot_channel and robot_channel.get_busy():
+                    robot_channel.stop()
+                    robot_chase_active = False
+            elif heart_channel and heart_channel.get_busy():
+                heart_channel.stop()
+                current_heart_name = None
+                if robot_channel and robot_channel.get_busy():
+                    robot_channel.stop()
+                    robot_chase_active = False
 
             previous_player_position = player_position
 
@@ -1012,14 +1237,39 @@ def start(planet, saved_state=None):
                 block_z = row_index * BLOCK_SIZE
 
                 # desenha o chão
-                draw_floor_tile(block_x, 0, block_z, BLOCK_SIZE, color=level_colors["floor"])
+                draw_textured_floor_tile(
+                    block_x,
+                    0,
+                    block_z,
+                    BLOCK_SIZE,
+                    texture_id=environment_textures["floor"],
+                    color=level_colors["floor"],
+                    uv_scale=1.0,
+                )
                 
                 # desenha o teto
-                draw_floor_tile(block_x, WALL_HEIGHT, block_z, BLOCK_SIZE, color=level_colors["ceiling"])
+                draw_textured_floor_tile(
+                    block_x,
+                    WALL_HEIGHT,
+                    block_z,
+                    BLOCK_SIZE,
+                    texture_id=environment_textures["ceiling"],
+                    color=level_colors["ceiling"],
+                    uv_scale=1.0,
+                )
 
                 # desenha a parede
                 if char == "#" or char == "P": # Suporta o padrão antigo ou o novo 'P'
-                    draw_cube(block_x, 0, block_z, BLOCK_SIZE, WALL_HEIGHT, color=level_colors["wall"])
+                    draw_textured_cube(
+                        block_x,
+                        0,
+                        block_z,
+                        BLOCK_SIZE,
+                        WALL_HEIGHT,
+                        texture_id=environment_textures["wall"],
+                        color=level_colors["wall"],
+                        uv_scale=1.0,
+                    )
 
                 elif char == "S":
                     draw_exit_module(
@@ -1035,7 +1285,7 @@ def start(planet, saved_state=None):
 
         for item_x, item_z in item_positions:
             if (item_x, item_z) not in collected_items:
-                draw_collectible(
+                draw_alien_crystal(
                     item_x,
                     0,
                     item_z,
@@ -1098,6 +1348,7 @@ def start(planet, saved_state=None):
         else:
             hud_lines.append(("ESC para voltar.", (235, 235, 235)))
 
+        draw_flashlight_overlay(screen_width, screen_height, pulse_time)
         draw_hud(screen_width, screen_height, hud_font, hud_lines)
 
         # --- RENDERIZAÇÃO DO MENU DE PAUSA / GAME OVER ---
@@ -1171,6 +1422,7 @@ def start(planet, saved_state=None):
         if result_state == "VITORIA" and pygame.time.get_ticks() >= exit_timer:
             running = False
 
+    stop_level_audio()
     return result_state
 
 

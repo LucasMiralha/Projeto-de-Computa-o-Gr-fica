@@ -9,7 +9,6 @@
       "possui_aneis": false,
       "splash_image": "tau_ceti_splash.png",
       "level_name": "tau_ceti_iv",
-      "level_name": "tau_ceti_iv",
       "layout": [
         [
           "PPPNPPPPPPPPPPPPPPPPPPPPP  ",
@@ -184,10 +183,8 @@
       "velocidade_rotacao": 0.09,
       "inclinacao_eixo": -21.6,
       "cor_ou_textura": "Martian.png",
-      "cor_ou_textura": "Martian.png",
       "possui_aneis": false,
       "splash_image": "splash.png",
-      "level_name": "vendas",
       "level_name": "vendas",
       "layout": [
         [
@@ -207,10 +204,8 @@
       "velocidade_rotacao": -0.08,
       "inclinacao_eixo": -20.5,
       "cor_ou_textura": "Volcanic.png",
-      "cor_ou_textura": "Volcanic.png",
       "possui_aneis": false,
-      "splash_image": "splash.png",
-      "level_name": "arago",
+      "splash_image": "aragon.jpg",
       "level_name": "arago",
       "layout": "random"
     },
@@ -220,10 +215,8 @@
       "velocidade_rotacao": 0.2,
       "inclinacao_eixo": -15.5,
       "cor_ou_textura": "Tropical.png",
-      "cor_ou_textura": "Tropical.png",
       "possui_aneis": true,
       "splash_image": "splash.png",
-      "level_name": "regis",
       "level_name": "regis",
       "layout": [
         [
