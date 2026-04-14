@@ -376,6 +376,9 @@ def main():
                 
                 if resultado_fase == "LOAD_GAME":
                     cb_carregar_main()
+                elif resultado_fase == "RESTART":
+                    saved_level_state = None
+                    transition_state = "START_LEVEL"
                 else:
                     app_state = "SISTEMA_SOLAR"
                     transition_state = "IDLE"

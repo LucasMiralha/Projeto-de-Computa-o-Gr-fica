@@ -112,11 +112,6 @@ def is_walkable_cell(level_map, row, col):
         return False
     return level_map[row][col] != "#"
 
-def is_walkable_cell(level_map, row, col):
-    if row < 0 or row >= len(level_map) or col < 0 or col >= len(level_map[0]):
-        return False
-    return level_map[row][col] != "#"
-
 def find_path(level_map, start_pos, target_pos):
     start_row, start_col = world_to_cell(*start_pos)
     target_row, target_col = world_to_cell(*target_pos)
@@ -154,3 +149,37 @@ def find_path(level_map, start_pos, target_pos):
         current = previous[current]
     path.reverse()
     return path
+
+def get_alien_isolation_spawn(level_map, player_pos, min_dist_blocks=5, max_dist_blocks=15):
+    import math
+    import random
+    from collections import deque
+    
+    p_row, p_col = world_to_cell(*player_pos)
+    
+    queue = deque([(p_row, p_col)])
+    visited = set([(p_row, p_col)])
+    valid_spawns = []
+    
+    while queue:
+        r, c = queue.popleft()
+        
+        dist = math.hypot(r - p_row, c - p_col)
+        
+        if min_dist_blocks <= dist <= max_dist_blocks:
+            valid_spawns.append((r, c))
+            
+        if dist > max_dist_blocks:
+            continue
+            
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            nr, nc = r + dr, c + dc
+            if is_walkable_cell(level_map, nr, nc) and (nr, nc) not in visited:
+                visited.add((nr, nc))
+                queue.append((nr, nc))
+                
+    if valid_spawns:
+        chosen_row, chosen_col = random.choice(valid_spawns)
+        return cell_to_world(chosen_row, chosen_col)
+        
+    return None
