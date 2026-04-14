@@ -11,10 +11,16 @@ def hex_to_rgb(hex_color):
     return tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
 
 
-def load_texture(image_path):
+def load_texture(image_path, max_size=None):
     try:
         # carrega a imagem
         planet_texture = pygame.image.load(image_path)
+        
+        # otimização: reduz resolução para texturas de ambiente (paredes, chão, teto)
+        if max_size is not None:
+            w, h = planet_texture.get_size()
+            if w > max_size or h > max_size:
+                planet_texture = pygame.transform.smoothscale(planet_texture, (max_size, max_size))
         
         # conversão da imagem para uso
         image_data = pygame.image.tostring(planet_texture, "RGBA", True)

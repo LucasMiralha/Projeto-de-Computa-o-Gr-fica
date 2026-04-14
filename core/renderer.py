@@ -6,25 +6,38 @@ from core.graphics_utils import hex_to_rgb
 from core.physics_engine import *
 
 
-def draw_textured_floor_tile(x, y, z, size, texture_id=None, color=(0.1, 0.1, 0.1), uv_scale=1.0):
-    if texture_id is None:
+def draw_textured_floor_tile(x, y, z, size, texture_id=None, bottom_texture_id=None, color=(0.1, 0.1, 0.1), uv_scale=1.0):
+    if texture_id is None and bottom_texture_id is None:
         draw_floor_tile(x, y, z, size, color=color)
         return
 
     half = size / 2.0
-    glEnable(GL_TEXTURE_2D)
-    glBindTexture(GL_TEXTURE_2D, texture_id)
     glColor3f(1.0, 1.0, 1.0)
-    glBegin(GL_QUADS)
-    glTexCoord2f(0.0, 0.0); glVertex3f(x - half, y, z - half)
-    glTexCoord2f(0.0, uv_scale); glVertex3f(x - half, y, z + half)
-    glTexCoord2f(uv_scale, uv_scale); glVertex3f(x + half, y, z + half)
-    glTexCoord2f(uv_scale, 0.0); glVertex3f(x + half, y, z - half)
-    glEnd()
-    glDisable(GL_TEXTURE_2D)
+    
+    if texture_id is not None:
+        glEnable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, texture_id)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0.0, 0.0); glVertex3f(x - half, y, z - half)
+        glTexCoord2f(0.0, uv_scale); glVertex3f(x - half, y, z + half)
+        glTexCoord2f(uv_scale, uv_scale); glVertex3f(x + half, y, z + half)
+        glTexCoord2f(uv_scale, 0.0); glVertex3f(x + half, y, z - half)
+        glEnd()
+        glDisable(GL_TEXTURE_2D)
+        
+    if bottom_texture_id is not None:
+        glEnable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, bottom_texture_id)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0.0, 0.0); glVertex3f(x - half, y, z - half)
+        glTexCoord2f(0.0, uv_scale); glVertex3f(x - half, y, z + half)
+        glTexCoord2f(uv_scale, uv_scale); glVertex3f(x + half, y, z + half)
+        glTexCoord2f(uv_scale, 0.0); glVertex3f(x + half, y, z - half)
+        glEnd()
+        glDisable(GL_TEXTURE_2D)
 
 
-def draw_textured_cube(x, y, z, size, height, texture_id=None, color=(0.15, 0.2, 0.15), uv_scale=1.0):
+def draw_textured_cube(x, y, z, size, height, texture_id=None, color=(0.15, 0.2, 0.15), uv_scale=1.0, alpha=1.0):
     if texture_id is None:
         draw_cube(x, y, z, size, height, color=color)
         return
@@ -32,7 +45,7 @@ def draw_textured_cube(x, y, z, size, height, texture_id=None, color=(0.15, 0.2,
     half = size / 2.0
     glEnable(GL_TEXTURE_2D)
     glBindTexture(GL_TEXTURE_2D, texture_id)
-    glColor3f(1.0, 1.0, 1.0)
+    glColor4f(1.0, 1.0, 1.0, alpha)
     glBegin(GL_QUADS)
 
     # frente
@@ -281,6 +294,11 @@ def start_opengl(height, width):
 def draw_cube(x, y, z, size, height, color=(0.15, 0.2, 0.15), texture_id=None):
     half = size / 2.0
     
+    # Fallback para quando o ID da textura  passado na posio da cor (posicional)
+    if not isinstance(color, (list, tuple)) and texture_id is None:
+        texture_id = color
+        color = (1.0, 1.0, 1.0)
+
     if texture_id is not None:
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, texture_id)
@@ -370,6 +388,11 @@ def draw_door(x, y, z, size, height, color=(0.4, 0.4, 0.44)):
 
 def draw_floor_tile(x, y, z, size, color=(0.1, 0.1, 0.1), texture_id=None):
     half = size / 2.0
+    # Fallback para quando o ID da textura  passado na posio da cor (posicional)
+    if not isinstance(color, (list, tuple)) and texture_id is None:
+        texture_id = color
+        color = (1.0, 1.0, 1.0)
+
     if texture_id is not None:
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, texture_id)
@@ -392,7 +415,7 @@ def draw_floor_tile(x, y, z, size, color=(0.1, 0.1, 0.1), texture_id=None):
     if texture_id is not None:
         glDisable(GL_TEXTURE_2D)
 
-def draw_u_stairs(x, y, z, size, height, direction_char):
+def draw_u_stairs(x, y, z, size, height, direction_char, texture_id=None):
     half = size / 2.0
     mid_y = height / 2.0
     
@@ -403,43 +426,68 @@ def draw_u_stairs(x, y, z, size, height, direction_char):
     glTranslatef(x, y, z)
     glRotatef(angle, 0, 1, 0)
     
-    glColor3f(0.2, 0.25, 0.2)
+    if texture_id is not None:
+        glEnable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, texture_id)
+        glColor3f(1.0, 1.0, 1.0)
+    else:
+        glColor3f(0.2, 0.25, 0.2)
+        
     glBegin(GL_QUADS)
     
-    # patamar
-    glVertex3f(-half, mid_y,  0); glVertex3f( half, mid_y,  0)
-    glVertex3f( half, mid_y, -half); glVertex3f(-half, mid_y, -half)
-    glVertex3f(-half, 0,  0); glVertex3f( half, 0,  0)
-    glVertex3f( half, mid_y,  0); glVertex3f(-half, mid_y,  0)
-    glVertex3f(-half, 0, -half); glVertex3f(-half, mid_y, -half)
-    glVertex3f( half, mid_y, -half); glVertex3f( half, 0, -half)
-    glVertex3f(-half, 0, -half); glVertex3f(-half, 0,  0)
-    glVertex3f(-half, mid_y,  0); glVertex3f(-half, mid_y, -half)
-    glVertex3f( half, 0,  0); glVertex3f( half, 0, -half)
-    glVertex3f( half, mid_y, -half); glVertex3f( half, mid_y,  0)
+    def qv(px, py, pz, u, v):
+        if texture_id is not None:
+            glTexCoord2f(u, v)
+        glVertex3f(px, py, pz)
+        
+    # patamar topo
+    qv(-half, mid_y,  0, 0,0); qv( half, mid_y,  0, 1,0)
+    qv( half, mid_y, -half, 1,1); qv(-half, mid_y, -half, 0,1)
+    # patamar frente
+    qv(-half, 0,  0, 0,0); qv( half, 0,  0, 1,0)
+    qv( half, mid_y,  0, 1,1); qv(-half, mid_y,  0, 0,1)
+    # patamar trás
+    qv(-half, 0, -half, 0,0); qv(-half, mid_y, -half, 0,1)
+    qv( half, mid_y, -half, 1,1); qv( half, 0, -half, 1,0)
+    # patamar lado esquerdo
+    qv(-half, 0, -half, 0,0); qv(-half, 0,  0, 1,0)
+    qv(-half, mid_y,  0, 1,1); qv(-half, mid_y, -half, 0,1)
+    # patamar lado direito
+    qv( half, 0,  0, 0,0); qv( half, 0, -half, 1,0)
+    qv( half, mid_y, -half, 1,1); qv( half, mid_y,  0, 0,1)
     
-    # lance 1
-    glVertex3f(0, 0, half); glVertex3f(half, 0, half)
-    glVertex3f(half, mid_y, 0); glVertex3f(0, mid_y, 0)
+    # lance 1 topo
+    qv(0, 0, half, 0,0); qv(half, 0, half, 1,0)
+    qv(half, mid_y, 0, 1,1); qv(0, mid_y, 0, 0,1)
     
-    # lance 2
-    glVertex3f(-half, mid_y, 0); glVertex3f(0, mid_y, 0)
-    glVertex3f(0, height, half); glVertex3f(-half, height, half)
-    glVertex3f(-half, 0, half); glVertex3f(0, 0, half)
-    glVertex3f(0, height, half); glVertex3f(-half, height, half)
+    # lance 2 topo
+    qv(-half, mid_y, 0, 0,0); qv(0, mid_y, 0, 1,0)
+    qv(0, height, half, 1,1); qv(-half, height, half, 0,1)
+    
+    # lance 1 interior / baixo
+    qv(-half, 0, half, 0,0); qv(0, 0, half, 1,0)
+    qv(0, height, half, 1,1); qv(-half, height, half, 0,1)
+    
+    # Restante de faces transformadas em textured (lance 2 etc)
+    qv(-half, 0, half, 0,0); qv(-half, 0, 0, 1,0)
+    qv(-half, mid_y, 0, 1,1); qv(-half, height, half, 0,1)
+    
+    qv(0, 0, half, 0,0); qv(0, 0, 0, 1,0)
+    qv(0, mid_y, 0, 1,1); qv(0, height, half, 0,1)
     glEnd()
     
     glBegin(GL_TRIANGLES)
-    glVertex3f(half, 0, half); glVertex3f(half, 0, 0); glVertex3f(half, mid_y, 0)
-    glVertex3f(0, 0, half); glVertex3f(0, mid_y, 0); glVertex3f(0, 0, 0)
+    def tv(px, py, pz, u, v):
+        if texture_id is not None:
+            glTexCoord2f(u, v)
+        glVertex3f(px, py, pz)
+        
+    tv(half, 0, half, 0,0); tv(half, 0, 0, 1,0); tv(half, mid_y, 0, 0.5,1)
+    tv(0, 0, half, 0,0); tv(0, mid_y, 0, 1,1); tv(0, 0, 0, 1,0)
     glEnd()
-    
-    glBegin(GL_QUADS)
-    glVertex3f(-half, 0, half); glVertex3f(-half, 0, 0)
-    glVertex3f(-half, mid_y, 0); glVertex3f(-half, height, half)
-    glVertex3f(0, 0, half); glVertex3f(0, 0, 0)
-    glVertex3f(0, mid_y, 0); glVertex3f(0, height, half)
-    glEnd()
+
+    if texture_id is not None:
+        glDisable(GL_TEXTURE_2D)
     
     glPopMatrix()
 

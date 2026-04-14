@@ -46,7 +46,7 @@ def start(planet, saved_state=None):
     screen_width = screen_info.current_w
     screen_height = screen_info.current_h
     
-    pygame.display.set_mode((screen_width, screen_height), DOUBLEBUF | OPENGL | FULLSCREEN)
+    pygame.display.set_mode((screen_width, screen_height), DOUBLEBUF | OPENGL)
     init_opengl_fps(screen_width, screen_height)
     
     pygame.mouse.set_visible(False)
@@ -150,8 +150,8 @@ def start(planet, saved_state=None):
     pygame.font.init()
     script_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     from core.graphics_utils import load_texture
-    wall_texture_id = load_texture(os.path.join(script_path, 'Assets', 'Textures', 'sewer wall.png'))
-    floor_texture_id = load_texture(os.path.join(script_path, 'Assets', 'Textures', 'sewer floor.png'))
+    wall_texture_id = load_texture(os.path.join(script_path, 'Assets', 'Textures', 'sewer wall.png'), max_size=128)
+    floor_texture_id = load_texture(os.path.join(script_path, 'Assets', 'Textures', 'sewer floor.png'), max_size=128)
     font_path = os.path.join(script_path, 'Assets', 'Fonts', 'united-sans-reg-bold.otf')
     fonte_botao = pygame.font.Font(font_path, 28)
     fonte_titulo = pygame.font.SysFont('Arial', 72, bold=True)
@@ -171,6 +171,7 @@ def start(planet, saved_state=None):
     running = True
     is_paused = False
     is_game_over = False
+    is_victory = False
     result_state = "MENU"
     esc_held = False
     
@@ -256,6 +257,51 @@ def start(planet, saved_state=None):
         hover_color=hover_button_color, text_color=font_button_color
     )
 
+    def cb_win_continue():
+        nonlocal running, result_state
+        result_state = "WIN_CONTINUE"
+        running = False
+
+    title_victory = Title(
+        screen_width // 2 - 300, screen_height // 2 - 200, 600, 100,
+        "VITÓRIA", fonte_titulo, bg_color=(0, 0, 0, 0),
+        text_color=(50, 255, 50, 255), align="center"
+    )
+    btn_win_continue = Button(
+        screen_width // 2 - 200, screen_height // 2 - 50, 450, 50, "CONTINUAR",
+        fonte_botao, cb_win_continue, base_color=button_color,
+        hover_color=hover_button_color, text_color=font_button_color
+    )
+    btn_win_menu = Button(
+        screen_width // 2 - 200, screen_height // 2 + 20, 450, 50, "VOLTAR AO MENU",
+        fonte_botao, cb_voltar_menu, base_color=button_color,
+        hover_color=hover_button_color, text_color=font_button_color
+    )
+    btn_win_exit = Button(
+        screen_width // 2 - 200, screen_height // 2 + 90, 450, 50, "SAIR",
+        fonte_botao, cb_sair_desktop, base_color=button_color,
+        hover_color=hover_button_color, text_color=font_button_color
+    )
+    # -- OTIMIZAÇÃO: COMPILAÇÃO DA DISPLAY LIST --
+    mapa_display_list = glGenLists(1)
+    glNewList(mapa_display_list, GL_COMPILE)
+    for y_index, andar in enumerate(current_map):
+        for z_index, linha in enumerate(andar):
+            for x_index, char in enumerate(linha):
+                if char == ' ': continue
+                
+                block_x = x_index * BLOCK_SIZE
+                block_y = y_index * WALL_HEIGHT
+                block_z = z_index * BLOCK_SIZE
+                
+                if char == 'P':
+                    draw_cube(block_x, block_y, block_z, BLOCK_SIZE, WALL_HEIGHT, color=(0.2, 0.4, 0.6), texture_id=wall_texture_id)
+                elif char != 'P' and char != ' ':
+                    # O chão está presente debaixo de qualquer bloco transitável, exceto nas paredes ou espaço vazio longo.
+                    draw_floor_tile(block_x, block_y, block_z, BLOCK_SIZE, color=(0.1, 0.2, 0.3), texture_id=floor_texture_id)
+    glEndList()
+    # --------------------------------------------
+
     while running:
         keys = pygame.key.get_pressed()
         
@@ -267,8 +313,8 @@ def start(planet, saved_state=None):
                 near_comp = comp
                 break
         
-        if not is_game_over:
-            if (keys[K_ESCAPE] or keys[K_p]) and not esc_held:
+        if not is_game_over and not is_victory:
+            if keys[K_ESCAPE] and not esc_held:
                 esc_held = True
                 if is_computer_ui_active:
                     is_computer_ui_active = False
@@ -281,7 +327,7 @@ def start(planet, saved_state=None):
                     is_paused = True
                     pygame.mouse.set_visible(True)
                     pygame.event.set_grab(False)
-            elif not (keys[K_ESCAPE] or keys[K_p]):
+            elif not keys[K_ESCAPE]:
                 esc_held = False
             
         mouse_pos = pygame.mouse.get_pos()
@@ -290,6 +336,10 @@ def start(planet, saved_state=None):
             btn_load_game.check_hover(mouse_pos)
             btn_back_menu.check_hover(mouse_pos)
             btn_exit_desktop.check_hover(mouse_pos)
+        elif is_victory:
+            btn_win_continue.check_hover(mouse_pos)
+            btn_win_menu.check_hover(mouse_pos)
+            btn_win_exit.check_hover(mouse_pos)
         elif is_paused:
             btn_continue.check_hover(mouse_pos)
             btn_save_game.check_hover(mouse_pos)
@@ -307,6 +357,10 @@ def start(planet, saved_state=None):
                 btn_load_game.handle_event(event)
                 btn_back_menu.handle_event(event)
                 btn_exit_desktop.handle_event(event)
+            elif is_victory:
+                btn_win_continue.handle_event(event)
+                btn_win_menu.handle_event(event)
+                btn_win_exit.handle_event(event)
             elif is_paused:
                 btn_continue.handle_event(event)
                 btn_save_game.handle_event(event)
@@ -318,13 +372,11 @@ def start(planet, saved_state=None):
                 if event.key == K_o:
                     dev_mode = not dev_mode
                     print(f"DEV MODE: {'ON - Imortalidade' if dev_mode else 'OFF'}")
-                if event.key == K_p:
-                    if is_paused:
-                        cb_continuar()
-                    else:
-                        is_paused = True
-                        pygame.mouse.set_visible(True)
-                        pygame.event.set_grab(False)
+                elif not is_paused and not is_game_over and not is_victory and event.key == K_p:
+                    is_victory = True
+                    pygame.mouse.set_visible(True)
+                    pygame.event.set_grab(False)
+
                 elif is_paused and event.key == K_q:
                     running = False
                 elif not is_paused and event.key == K_e:
@@ -383,15 +435,20 @@ def start(planet, saved_state=None):
                             except Exception as e:
                                 print(f"Erro no som da porta: {e}")
         
-        if is_paused:
+        if is_paused or is_victory:
             mouse_pos = pygame.mouse.get_pos()
-            btn_continue.check_hover(mouse_pos)
-            btn_save_game.check_hover(mouse_pos)
-            btn_load_game.check_hover(mouse_pos)
-            btn_back_menu.check_hover(mouse_pos)
-            btn_exit_desktop.check_hover(mouse_pos)
+            if is_victory:
+                btn_win_continue.check_hover(mouse_pos)
+                btn_win_menu.check_hover(mouse_pos)
+                btn_win_exit.check_hover(mouse_pos)
+            else:
+                btn_continue.check_hover(mouse_pos)
+                btn_save_game.check_hover(mouse_pos)
+                btn_load_game.check_hover(mouse_pos)
+                btn_back_menu.check_hover(mouse_pos)
+                btn_exit_desktop.check_hover(mouse_pos)
             
-        if not is_paused and not is_computer_ui_active and not is_game_over:
+        if not is_paused and not is_computer_ui_active and not is_game_over and not is_victory:
             mouse_dx, mouse_dy = pygame.mouse.get_rel()
             yaw += mouse_dx * mouse_sensitivity
             pitch += mouse_dy * mouse_sensitivity
@@ -430,8 +487,11 @@ def start(planet, saved_state=None):
                 
             if fixed_computers >= 3 and final_zone_data:
                 if math.hypot(cam_x - final_zone_data['x'], cam_z - final_zone_data['z']) < 2.0:
-                    print("- VOCE CONCLUIU A MISSAO COM SUCESSO -")
-                    return "win"
+                    if not is_victory:
+                        print("- VOCE CONCLUIU A MISSAO COM SUCESSO -")
+                        is_victory = True
+                        pygame.mouse.set_visible(True)
+                        pygame.event.set_grab(False)
                 
             current_time = pygame.time.get_ticks()
             if fixed_computers > 0:
@@ -524,28 +584,22 @@ def start(planet, saved_state=None):
         glRotatef(yaw, 0, 1, 0)
         glTranslatef(-cam_x, -cam_y, -cam_z)
         
+        # Desenha a geometria estática da Display List
+        glCallList(mapa_display_list)
+
+        # Percorre a matriz apenas para elementos realmente dinâmicos, ou usa os raw data (só a porta de extração sobrou na grid)
         for y_index, andar in enumerate(current_map):
             for z_index, linha in enumerate(andar):
                 for x_index, char in enumerate(linha):
-                    if char == ' ': continue
-                    
-                    block_x = x_index * BLOCK_SIZE
-                    block_y = y_index * WALL_HEIGHT
-                    block_z = z_index * BLOCK_SIZE
-                    
-                    if char in ('P', 'D', 'F'):
-                        if char == 'P':
-                            draw_cube(block_x, block_y, block_z, BLOCK_SIZE, WALL_HEIGHT, color=(0.2, 0.4, 0.6), texture_id=wall_texture_id)
-                        elif char == 'F':
-                            if fixed_computers >= 3:
-                                draw_door(block_x, block_y, block_z, 4.0, 4.0, color=(0.2, 0.8, 0.2)) # Porta Livre
-                            else:
-                                draw_door(block_x, block_y, block_z, 4.0, 4.0, color=(0.8, 0.2, 0.2)) # Porta Trancada
+                    if char == 'F':
+                        block_x = x_index * BLOCK_SIZE
+                        block_y = y_index * WALL_HEIGHT
+                        block_z = z_index * BLOCK_SIZE
+                        
+                        if fixed_computers >= 3:
+                            draw_door(block_x, block_y, block_z, 4.0, 4.0, color=(0.2, 0.8, 0.2)) # Porta Livre
                         else:
-                            pass
-                    
-                    if char != 'P':
-                        draw_floor_tile(block_x, block_y, block_z, BLOCK_SIZE, color=(0.1, 0.2, 0.3), texture_id=floor_texture_id)
+                            draw_door(block_x, block_y, block_z, 4.0, 4.0, color=(0.8, 0.2, 0.2)) # Porta Trancada
         
         for comp in computers_data:
             c_color = (0.8, 0.8, 0.1) if comp.get('is_broken', False) else (0.8, 0.1, 0.1)
@@ -583,6 +637,29 @@ def start(planet, saved_state=None):
             btn_load_game.draw()
             btn_back_menu.draw()
             btn_exit_desktop.draw()
+
+            prepare_3d()
+            
+        elif is_victory:
+            prepare_2d(screen_width, screen_height)
+            glDisable(GL_TEXTURE_2D)
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            
+            # Fundo verde para vitória
+            glColor4f(0, 0.5, 0, 0.4)
+            glBegin(GL_QUADS)
+            glVertex2f(0, 0)
+            glVertex2f(screen_width, 0)
+            glVertex2f(screen_width, screen_height)
+            glVertex2f(0, screen_height)
+            glEnd()
+            
+            glEnable(GL_TEXTURE_2D)
+            title_victory.draw()
+            btn_win_continue.draw()
+            btn_win_menu.draw()
+            btn_win_exit.draw()
 
             prepare_3d()
             

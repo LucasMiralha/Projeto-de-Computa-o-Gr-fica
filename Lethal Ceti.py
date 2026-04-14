@@ -48,8 +48,8 @@ def main():
     screen_height = screen_info.current_h
     screen_width = screen_info.current_w
 
-    screen = pygame.display.set_mode((screen_width, screen_height), DOUBLEBUF | OPENGL | FULLSCREEN)
-    pygame.display.set_caption("Tau Ceti Wars")
+    screen = pygame.display.set_mode((screen_width, screen_height), DOUBLEBUF | OPENGL)
+    pygame.display.set_caption("Lethal Ceti")
 
     script_path = os.path.dirname(os.path.abspath(__file__))
 
@@ -106,7 +106,7 @@ def main():
     # Inicialização do Título (PEP8)
     title_main = Title(
         screen_width // 2 - 300, screen_height // 2 - 250, 600, 100,
-        "TAU CETI WARS", fonte_titulo, bg_color=(0, 0, 0, 0),
+        "LETHAL CETI", fonte_titulo, bg_color=(0, 0, 0, 0),
         text_color=(255, 255, 255, 0), align="center"
     )
 
@@ -355,7 +355,8 @@ def main():
                 # Reinicia a música ambiente do menu
                 pygame.mixer.music.play(-1)
                 
-                if resultado_fase == "win":
+                next_planet_to_load = None
+                if resultado_fase in ["win", "WIN_CONTINUE"]:
                     # Limpa o save da fase vencida
                     save_manager.clear_level_save(target_planet.name)
                     # percorremos o sistema para encontrar o planeta que acabamos de vencer
@@ -364,6 +365,7 @@ def main():
                             # se existir um próximo planeta na lista, ele é desbloqueado
                             if i + 1 < len(star_system):
                                 star_system[i + 1].is_unlocked = True
+                                next_planet_to_load = star_system[i + 1]
                                 print(f"Sucesso! Próximo destino desbloqueado: {star_system[i + 1].name}")
                             # Salva progresso global atualizado
                             save_manager.save_main_save(
@@ -377,6 +379,10 @@ def main():
                 if resultado_fase == "LOAD_GAME":
                     cb_carregar_main()
                 elif resultado_fase == "RESTART":
+                    saved_level_state = None
+                    transition_state = "START_LEVEL"
+                elif resultado_fase == "WIN_CONTINUE" and next_planet_to_load:
+                    target_planet = next_planet_to_load
                     saved_level_state = None
                     transition_state = "START_LEVEL"
                 else:

@@ -612,7 +612,7 @@ def start(planet, saved_state=None):
     screen_width = screen_info.current_w
     screen_height = screen_info.current_h
 
-    pygame.display.set_mode((screen_width, screen_height), DOUBLEBUF | OPENGL| FULLSCREEN)
+    pygame.display.set_mode((screen_width, screen_height), DOUBLEBUF | OPENGL)
     init_opengl_fps(screen_width, screen_height)
 
     pygame.mouse.set_visible(False)
@@ -623,7 +623,7 @@ def start(planet, saved_state=None):
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sounds_path = os.path.join(project_root, "Assets", "Sounds")
     planet_textures_path = os.path.join(project_root, "Assets", "Planet Textures")
-    custom_textures_path = os.path.join(project_root, "Assets", "texturas")
+    custom_textures_path = os.path.join(project_root, "Assets", "Textures")
     environment_textures = {
         "wall": None,
         "floor": None,
@@ -660,9 +660,9 @@ def start(planet, saved_state=None):
         wall_texture_path = os.path.join(custom_textures_path, "parede_arago.png")
         floor_texture_path = os.path.join(custom_textures_path, "chao_arago.png")
         ceiling_texture_path = os.path.join(custom_textures_path, "teto_arago.png")
-        environment_textures["wall"] = load_texture(wall_texture_path)
-        environment_textures["floor"] = load_texture(floor_texture_path)
-        environment_textures["ceiling"] = load_texture(ceiling_texture_path)
+        environment_textures["wall"] = load_texture(wall_texture_path, max_size=128)
+        environment_textures["floor"] = load_texture(floor_texture_path, max_size=128)
+        environment_textures["ceiling"] = load_texture(ceiling_texture_path, max_size=128)
     except pygame.error:
         sound_enabled = False
 
@@ -805,6 +805,9 @@ def start(planet, saved_state=None):
     _hover_btn_color = (95, 198, 139, 150)
     is_paused = False
     is_game_over = False
+    is_victory = False
+
+    # Moved
 
     title_pause = Title(
         screen_width // 2 - 300, screen_height // 2 - 200, 600, 100,
@@ -883,6 +886,33 @@ def start(planet, saved_state=None):
         fonte_botao, cb_sair_desktop, base_color=_btn_color,
         hover_color=_hover_btn_color, text_color=_font_btn_color
     )
+
+    def cb_win_continue():
+        nonlocal running, result_state
+        stop_level_audio()
+        result_state = "WIN_CONTINUE"
+        running = False
+
+    title_victory = Title(
+        screen_width // 2 - 300, screen_height // 2 - 200, 600, 100,
+        "VITÓRIA", fonte_titulo, bg_color=(0, 0, 0, 0),
+        text_color=(50, 255, 50, 255), align="center"
+    )
+    btn_win_continue = Button(
+        screen_width // 2 - 150, screen_height // 2 - 50, 300, 50, "CONTINUAR",
+        fonte_botao, cb_win_continue, base_color=_btn_color,
+        hover_color=_hover_btn_color, text_color=_font_btn_color
+    )
+    btn_win_menu = Button(
+        screen_width // 2 - 150, screen_height // 2 + 20, 300, 50, "VOLTAR AO MENU",
+        fonte_botao, cb_voltar_menu, base_color=_btn_color,
+        hover_color=_hover_btn_color, text_color=_font_btn_color
+    )
+    btn_win_exit = Button(
+        screen_width // 2 - 150, screen_height // 2 + 90, 300, 50, "SAIR",
+        fonte_botao, cb_sair_desktop, base_color=_btn_color,
+        hover_color=_hover_btn_color, text_color=_font_btn_color
+    )
     
     def cb_restart_level():
         nonlocal running, result_state
@@ -901,6 +931,51 @@ def start(planet, saved_state=None):
         hover_color=_hover_btn_color, text_color=_font_btn_color
     )
 
+    # -- OTIMIZAÇÃO: COMPILAÇÃO DA DISPLAY LIST --
+    mapa_display_list = glGenLists(1)
+    glNewList(mapa_display_list, GL_COMPILE)
+    for row_index, row_string in enumerate(current_map):
+        for col_index, char in enumerate(row_string):
+            block_x = col_index * BLOCK_SIZE
+            block_z = row_index * BLOCK_SIZE
+
+            # desenha o chão
+            draw_textured_floor_tile(
+                block_x,
+                0,
+                block_z,
+                BLOCK_SIZE,
+                texture_id=environment_textures["floor"],
+                color=level_colors["floor"],
+                uv_scale=1.0,
+            )
+            
+            # desenha o teto
+            draw_textured_floor_tile(
+                block_x,
+                WALL_HEIGHT,
+                block_z,
+                BLOCK_SIZE,
+                texture_id=environment_textures["ceiling"],
+                color=level_colors["ceiling"],
+                uv_scale=1.0,
+            )
+
+            # desenha a parede
+            if char == "#" or char == "P":
+                draw_textured_cube(
+                    block_x,
+                    0,
+                    block_z,
+                    BLOCK_SIZE,
+                    WALL_HEIGHT,
+                    texture_id=environment_textures["wall"],
+                    color=level_colors["wall"],
+                    uv_scale=1.0,
+                )
+    glEndList()
+    # --------------------------------------------
+
     running = True
     esc_held = False
 
@@ -918,8 +993,8 @@ def start(planet, saved_state=None):
         creature_state = creature_profile["state"]
 
         keys_raw = pygame.key.get_pressed()
-        if not is_game_over:
-            if (keys_raw[K_ESCAPE] or keys_raw[K_p]) and not esc_held:
+        if not is_game_over and not is_victory:
+            if keys_raw[K_ESCAPE] and not esc_held:
                 esc_held = True
                 if is_paused:
                     cb_continuar()
@@ -927,7 +1002,7 @@ def start(planet, saved_state=None):
                     is_paused = True
                     pygame.mouse.set_visible(True)
                     pygame.event.set_grab(False)
-            elif not (keys_raw[K_ESCAPE] or keys_raw[K_p]):
+            elif not keys_raw[K_ESCAPE]:
                 esc_held = False
 
         for event in pygame.event.get():
@@ -942,6 +1017,10 @@ def start(planet, saved_state=None):
                 btn_load.handle_event(event)
                 btn_menu.handle_event(event)
                 btn_exit.handle_event(event)
+            elif is_victory:
+                btn_win_continue.handle_event(event)
+                btn_win_menu.handle_event(event)
+                btn_win_exit.handle_event(event)
             elif is_paused:
                 btn_continue.handle_event(event)
                 btn_save.handle_event(event)
@@ -950,10 +1029,12 @@ def start(planet, saved_state=None):
                 btn_exit.handle_event(event)
 
             if event.type == KEYDOWN:
-                if event.key == K_ESCAPE:
-                    stop_level_audio()
-                    running = False
-                elif event.key == K_e and planet.name == "Arago":
+                if not is_paused and not is_game_over and not is_victory and event.key == K_p:
+                    is_victory = True
+                    pygame.mouse.set_visible(True)
+                    pygame.event.set_grab(False)
+                    continue
+                if not is_paused and not is_game_over and not is_victory and event.key == K_e and planet.name == "Arago":
                     if near_item_position:
                         collected_items.add(near_item_position)
                         items_collected += 1
@@ -979,10 +1060,12 @@ def start(planet, saved_state=None):
                             play_sound(sound_enabled, sounds, "unlock")
                     elif near_exit:
                         if exit_unlocked:
-                            result_state = "VITORIA"
-                            status_message = "Evacuacao iniciada. Retornando ao mapa estelar."
-                            exit_timer = pygame.time.get_ticks() + 1000
-                            play_sound(sound_enabled, sounds, "victory")
+                            if not is_victory:
+                                is_victory = True
+                                pygame.mouse.set_visible(True)
+                                pygame.event.set_grab(False)
+                                status_message = "Evacuacao iniciada."
+                                play_sound(sound_enabled, sounds, "victory")
                         else:
                             status_message = f"Saida bloqueada. Colete os 7 itens. Atual: {items_collected}/7."
                             play_sound(sound_enabled, sounds, "blocked")
@@ -990,21 +1073,24 @@ def start(planet, saved_state=None):
                         status_message = "Nenhum item ou saida ao alcance."
 
         # Atualiza hover dos botões de pausa
+        mouse_pos = pygame.mouse.get_pos()
         if is_game_over:
-            mouse_pos = pygame.mouse.get_pos()
             btn_restart_go.check_hover(mouse_pos)
             btn_load.check_hover(mouse_pos)
             btn_menu.check_hover(mouse_pos)
             btn_exit.check_hover(mouse_pos)
+        elif is_victory:
+            btn_win_continue.check_hover(mouse_pos)
+            btn_win_menu.check_hover(mouse_pos)
+            btn_win_exit.check_hover(mouse_pos)
         elif is_paused:
-            mouse_pos = pygame.mouse.get_pos()
             btn_continue.check_hover(mouse_pos)
             btn_save.check_hover(mouse_pos)
             btn_load.check_hover(mouse_pos)
             btn_menu.check_hover(mouse_pos)
             btn_exit.check_hover(mouse_pos)
 
-        if is_paused or is_game_over:
+        if is_game_over or is_paused or is_victory:
             # Pula a lógica de jogo, vai direto pra renderização
             pass
         else:
@@ -1231,57 +1317,20 @@ def start(planet, saved_state=None):
 
         pulse_time = pygame.time.get_ticks()
 
-        for row_index, row_string in enumerate(current_map):
-            for col_index, char in enumerate(row_string):
-                block_x = col_index * BLOCK_SIZE
-                block_z = row_index * BLOCK_SIZE
+        # Desenha a geometria estática utilizando Display List otimizada
+        glCallList(mapa_display_list)
 
-                # desenha o chão
-                draw_textured_floor_tile(
-                    block_x,
-                    0,
-                    block_z,
-                    BLOCK_SIZE,
-                    texture_id=environment_textures["floor"],
-                    color=level_colors["floor"],
-                    uv_scale=1.0,
-                )
-                
-                # desenha o teto
-                draw_textured_floor_tile(
-                    block_x,
-                    WALL_HEIGHT,
-                    block_z,
-                    BLOCK_SIZE,
-                    texture_id=environment_textures["ceiling"],
-                    color=level_colors["ceiling"],
-                    uv_scale=1.0,
-                )
-
-                # desenha a parede
-                if char == "#" or char == "P": # Suporta o padrão antigo ou o novo 'P'
-                    draw_textured_cube(
-                        block_x,
-                        0,
-                        block_z,
-                        BLOCK_SIZE,
-                        WALL_HEIGHT,
-                        texture_id=environment_textures["wall"],
-                        color=level_colors["wall"],
-                        uv_scale=1.0,
-                    )
-
-                elif char == "S":
-                    draw_exit_module(
-                        block_x,
-                        0,
-                        block_z,
-                        BLOCK_SIZE * 0.82,
-                        level_colors["exit_locked"],
-                        level_colors["exit_unlocked"],
-                        exit_unlocked,
-                        pulse_time,
-                    )
+        if exit_position:
+            draw_exit_module(
+                exit_position[0],
+                0,
+                exit_position[1],
+                BLOCK_SIZE * 0.82,
+                level_colors["exit_locked"],
+                level_colors["exit_unlocked"],
+                exit_unlocked,
+                pulse_time,
+            )
 
         for item_x, item_z in item_positions:
             if (item_x, item_z) not in collected_items:
@@ -1382,6 +1431,35 @@ def start(planet, saved_state=None):
             glPopMatrix()
             glMatrixMode(GL_MODELVIEW)
             glPopMatrix()
+            
+        elif is_victory:
+            glMatrixMode(GL_PROJECTION)
+            glPushMatrix()
+            glLoadIdentity()
+            glOrtho(0, screen_width, screen_height, 0, -1, 1)
+            glMatrixMode(GL_MODELVIEW)
+            glPushMatrix()
+            glLoadIdentity()
+            glDisable(GL_DEPTH_TEST)
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+            glColor4f(0, 0.5, 0, 0.4)
+            glBegin(GL_QUADS)
+            glVertex2f(0, 0); glVertex2f(screen_width, 0)
+            glVertex2f(screen_width, screen_height); glVertex2f(0, screen_height)
+            glEnd()
+            
+            title_victory.draw()
+            btn_win_continue.draw()
+            btn_win_menu.draw()
+            btn_win_exit.draw()
+
+            glEnable(GL_DEPTH_TEST)
+            glMatrixMode(GL_PROJECTION)
+            glPopMatrix()
+            glMatrixMode(GL_MODELVIEW)
+            glPopMatrix()
 
         elif is_paused:
             # Overlay 2D para o menu de pausa
@@ -1418,9 +1496,6 @@ def start(planet, saved_state=None):
 
         pygame.display.flip()
         delta_seconds = clock.tick(fps) / 1000.0
-
-        if result_state == "VITORIA" and pygame.time.get_ticks() >= exit_timer:
-            running = False
 
     stop_level_audio()
     return result_state

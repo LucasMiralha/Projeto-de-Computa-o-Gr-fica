@@ -9,7 +9,8 @@ from OpenGL.GL import *
 from OpenGL.GLU import *
 
 
-from core.renderer import draw_cube, draw_floor_tile, draw_u_stairs, draw_computer
+from core.graphics_utils import load_texture
+from core.renderer import draw_cube, draw_floor_tile, draw_u_stairs, draw_computer, draw_textured_cube, draw_textured_floor_tile
 from core.physics_engine import (BLOCK_SIZE, WALL_HEIGHT, is_wall, 
                                  has_ramp_below, get_target_y)
 from core.ui import Button, Title
@@ -286,9 +287,12 @@ def draw_equals_sign():
     glVertex3f(-0.15, -0.1, 0); glVertex3f(0.15, -0.1, 0)
     glEnd()
 
-def draw_graffiti_cube(x, y, z, char_fixo, char_sorteado):
+def draw_graffiti_cube(x, y, z, char_fixo, char_sorteado, texture_id=None):
     # Desenha o cubo base (parede)
-    draw_cube(x, y, z, BLOCK_SIZE, WALL_HEIGHT, color=(0.15, 0.2, 0.15))
+    if texture_id:
+        draw_textured_cube(x, y, z, BLOCK_SIZE, WALL_HEIGHT, texture_id=texture_id)
+    else:
+        draw_cube(x, y, z, BLOCK_SIZE, WALL_HEIGHT, color=(0.15, 0.2, 0.15))
     
     offset = (BLOCK_SIZE / 2) + 0.02 # Pequeno recuo para evitar z-fighting
     glLineWidth(3.0)
@@ -528,12 +532,21 @@ def start(planet, saved_state=None):
     screen_height = screen_info.current_h
     
     # garante que o contexto OpenGL está limpo e focado
-    pygame.display.set_mode((screen_width, screen_height), DOUBLEBUF | OPENGL | FULLSCREEN)
+    pygame.display.set_mode((screen_width, screen_height), DOUBLEBUF | OPENGL)
     
     init_opengl_fps(screen_width, screen_height)
     
     pygame.mouse.set_visible(False)
     pygame.event.set_grab(True)
+    
+    # Carregamento de texturas de ambiente
+    script_path = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_path)
+    textures_path = os.path.join(project_root, "Assets", "Textures")
+    tex_floor = load_texture(os.path.join(textures_path, "chao_tauceti.png"), max_size=128)
+    tex_wall = load_texture(os.path.join(textures_path, "parede_tauceti.png"), max_size=128)
+    tex_ceiling = load_texture(os.path.join(textures_path, "teto_tauceti.png"), max_size=128)
+    tex_glass = load_texture(os.path.join(textures_path, "vidro_tauceti.png"), max_size=128)
     
     # Fontes para HUD e UI do Computador
     hud_font = pygame.font.SysFont("consolas", 24, bold=True)
@@ -602,6 +615,39 @@ def start(planet, saved_state=None):
                     })
     
     alien_ai = AlienFSM(alien_spawn_x, alien_spawn_y, alien_spawn_z, collision_map)
+
+    # -- OTIMIZAÇÃO: COMPILAÇÃO DA DISPLAY LIST --
+    mapa_display_list = glGenLists(1)
+    glNewList(mapa_display_list, GL_COMPILE)
+    for y_index, andar in enumerate(current_map):
+        for z_index, linha in enumerate(andar):
+            for x_index, char in enumerate(linha):
+                if char == ' ': continue
+                block_x = x_index * BLOCK_SIZE
+                block_y = y_index * WALL_HEIGHT
+                block_z = z_index * BLOCK_SIZE
+                
+                is_stair = char in ['<', '>', '^', 'v']
+                if not is_stair and not has_ramp_below(y_index, z_index, x_index, current_map):
+                    draw_textured_floor_tile(block_x, block_y, block_z, BLOCK_SIZE, texture_id=tex_floor, bottom_texture_id=tex_ceiling)
+                
+                if not is_stair and y_index == len(current_map) - 1:
+                    draw_textured_floor_tile(block_x, block_y + WALL_HEIGHT, block_z, BLOCK_SIZE, texture_id=None, bottom_texture_id=tex_ceiling)
+
+                if char == 'P':
+                    draw_textured_cube(block_x, block_y, block_z, BLOCK_SIZE, WALL_HEIGHT, texture_id=tex_wall)
+                elif char == 'V':
+                    glEnable(GL_BLEND)
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+                    draw_textured_cube(block_x, block_y, block_z, BLOCK_SIZE, WALL_HEIGHT, texture_id=tex_glass, alpha=0.6)
+                    glDisable(GL_BLEND)
+                elif is_stair:
+                    draw_u_stairs(block_x, block_y, block_z, BLOCK_SIZE, WALL_HEIGHT, char, texture_id=tex_floor)
+                elif char in ['N', 'S', 'L', 'O']:
+                    letra_secreta = puzzle_mapping[char]
+                    draw_graffiti_cube(block_x, block_y, block_z, char, letra_secreta, texture_id=tex_wall)
+    glEndList()
+    # --------------------------------------------
 
     # --- VARIÁVEIS DE ESTADO DA UI ---
     interacting_comp = None # Computador atualmente aberto
@@ -673,8 +719,11 @@ def start(planet, saved_state=None):
 
     running = True
     is_paused = False
+    is_victory = False
     result_state = "MENU"
     esc_held = False
+
+    # UI moved down
 
     def cb_continuar():
         nonlocal is_paused
@@ -753,6 +802,32 @@ def start(planet, saved_state=None):
         hover_color=hover_button_color, text_color=font_button_color
     )
 
+    def cb_win_continue():
+        nonlocal running, result_state
+        result_state = "WIN_CONTINUE"
+        running = False
+
+    title_victory = Title(
+        screen_width // 2 - 300, screen_height // 2 - 200, 600, 100,
+        "VITÓRIA", fonte_titulo, bg_color=(0, 0, 0, 0),
+        text_color=(50, 255, 50, 255), align="center"
+    )
+    btn_win_continue = Button(
+        screen_width // 2 - 200, screen_height // 2 - 50, 450, 50, "CONTINUAR",
+        fonte_botao, cb_win_continue, base_color=button_color,
+        hover_color=hover_button_color, text_color=font_button_color
+    )
+    btn_win_menu = Button(
+        screen_width // 2 - 200, screen_height // 2 + 20, 450, 50, "VOLTAR AO MENU",
+        fonte_botao, cb_voltar_menu, base_color=button_color,
+        hover_color=hover_button_color, text_color=font_button_color
+    )
+    btn_win_exit = Button(
+        screen_width // 2 - 200, screen_height // 2 + 90, 450, 50, "SAIR",
+        fonte_botao, cb_sair_desktop, base_color=button_color,
+        hover_color=hover_button_color, text_color=font_button_color
+    )
+
     while running:
         # Verifica se o jogador está perto de algum computador
         near_comp = None
@@ -770,21 +845,34 @@ def start(planet, saved_state=None):
 
         keys_raw = pygame.key.get_pressed()
         
-        if (keys_raw[K_ESCAPE] or keys_raw[K_p]) and not esc_held:
-            esc_held = True
-            if interacting_comp:
-                interacting_comp = None # Sai do PC
-                pygame.mouse.set_visible(False)
-                pygame.event.set_grab(True)
-            else:
-                if is_paused:
-                    cb_continuar()
+        if not is_victory:
+            if keys_raw[K_ESCAPE] and not esc_held:
+                esc_held = True
+                if interacting_comp:
+                    interacting_comp = None # Sai do PC
+                    pygame.mouse.set_visible(False)
+                    pygame.event.set_grab(True)
                 else:
-                    is_paused = True
-                    pygame.mouse.set_visible(True)
-                    pygame.event.set_grab(False)
-        elif not (keys_raw[K_ESCAPE] or keys_raw[K_p]):
-            esc_held = False
+                    if is_paused:
+                        cb_continuar()
+                    else:
+                        is_paused = True
+                        pygame.mouse.set_visible(True)
+                        pygame.event.set_grab(False)
+            elif not keys_raw[K_ESCAPE]:
+                esc_held = False
+        
+        mouse_pos = pygame.mouse.get_pos()
+        if is_victory:
+            btn_win_continue.check_hover(mouse_pos)
+            btn_win_menu.check_hover(mouse_pos)
+            btn_win_exit.check_hover(mouse_pos)
+        elif is_paused:
+            btn_continue.check_hover(mouse_pos)
+            btn_save_game.check_hover(mouse_pos)
+            btn_load_game.check_hover(mouse_pos)
+            btn_back_menu.check_hover(mouse_pos)
+            btn_exit_desktop.check_hover(mouse_pos)
 
         # leitor de eventos
         for event in pygame.event.get():
@@ -792,7 +880,11 @@ def start(planet, saved_state=None):
                 pygame.quit()
                 sys.exit()
                 
-            if is_paused:
+            if is_victory:
+                btn_win_continue.handle_event(event)
+                btn_win_menu.handle_event(event)
+                btn_win_exit.handle_event(event)
+            elif is_paused:
                 btn_continue.handle_event(event)
                 btn_save_game.handle_event(event)
                 btn_load_game.handle_event(event)
@@ -800,6 +892,12 @@ def start(planet, saved_state=None):
                 btn_exit_desktop.handle_event(event)
 
             if event.type == KEYDOWN:
+                if not is_paused and not is_victory and event.key == K_p:
+                    is_victory = True
+                    pygame.mouse.set_visible(True)
+                    pygame.event.set_grab(False)
+                    continue
+
                 if interacting_comp:
                     if event.key == K_BACKSPACE:
                         interacting_comp['current_input'] = interacting_comp['current_input'][:-1]
@@ -925,40 +1023,8 @@ def start(planet, saved_state=None):
         glRotatef(yaw, 0, 1, 0)   
         glTranslatef(-cam_x, -cam_y, -cam_z)
 
-        # percorre a matriz 3D de layout do mapa
-        for y_index, andar in enumerate(current_map):
-            for z_index, linha in enumerate(andar):
-                for x_index, char in enumerate(linha):
-                    
-                    # ignora espaço vazio
-                    if char == ' ':
-                        continue
-
-                    block_x = x_index * BLOCK_SIZE
-                    block_y = y_index * WALL_HEIGHT
-                    block_z = z_index * BLOCK_SIZE
-
-                    # renderização do chão
-                    # mas se não houver uma rampa no bloco exatamente abaixo
-                    if not has_ramp_below(y_index, z_index, x_index, current_map):
-                        draw_floor_tile(block_x, block_y, block_z, BLOCK_SIZE)
-
-                    # renderização da parede
-                    if char == 'P':
-                        draw_cube(block_x, block_y, block_z, BLOCK_SIZE, WALL_HEIGHT)
-
-                    # TODO: draw_cube com textura transparente de vidro
-                    elif char == 'V':
-                        pass
-                    
-                    # renderização da escada
-                    # passamos o 'char' (a direção) para orientar a escada
-                    elif char in ['<', '>', '^', 'v']:
-                        draw_u_stairs(block_x, block_y, block_z, BLOCK_SIZE, WALL_HEIGHT, char)
-
-                    elif char in ['N', 'S', 'L', 'O']:
-                        letra_secreta = puzzle_mapping[char]
-                        draw_graffiti_cube(block_x, block_y, block_z, char, letra_secreta)
+        # percorre a matriz 3D estática através da Display List compilada (MUITO MAIS RÁPIDO PARA O FPS)
+        glCallList(mapa_display_list)
 
         for comp in computers_data:
             # Se resolvido fica verde, senão azul
@@ -975,8 +1041,10 @@ def start(planet, saved_state=None):
         total_computadores = len(computers_data)
 
         if total_computadores > 0 and computadores_resolvidos == total_computadores:
-            result_state = "win"
-            running = False
+            if not is_victory:
+                is_victory = True
+                pygame.mouse.set_visible(True)
+                pygame.event.set_grab(False)
         
         hud_surface = hud_font.render(f"Computadores acessados: {computadores_resolvidos}/{total_computadores}", True, (240, 240, 240))
         hud_data = pygame.image.tostring(hud_surface, "RGBA", True)
@@ -1037,7 +1105,25 @@ def start(planet, saved_state=None):
             glRasterPos2f(ui_x + 50, ui_y + ui_h * 0.6)
             glDrawPixels(*in_surf.get_size(), GL_RGBA, GL_UNSIGNED_BYTE, pygame.image.tostring(in_surf, "RGBA", True))
         
-        if is_paused:
+        if is_victory:
+            glDisable(GL_TEXTURE_2D)
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            
+            # Fundo verde
+            glColor4f(0, 0.5, 0, 0.4)
+            glBegin(GL_QUADS)
+            glVertex2f(0, 0); glVertex2f(screen_width, 0)
+            glVertex2f(screen_width, screen_height); glVertex2f(0, screen_height)
+            glEnd()
+            
+            glEnable(GL_TEXTURE_2D)
+            title_victory.draw()
+            btn_win_continue.draw()
+            btn_win_menu.draw()
+            btn_win_exit.draw()
+            
+        elif is_paused:
             glDisable(GL_TEXTURE_2D)
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
@@ -1049,6 +1135,7 @@ def start(planet, saved_state=None):
             glVertex2f(screen_width, screen_height); glVertex2f(0, screen_height)
             glEnd()
             
+            glEnable(GL_TEXTURE_2D)
             title_pause.draw()
             btn_continue.draw()
             btn_save_game.draw()
