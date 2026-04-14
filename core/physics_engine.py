@@ -4,6 +4,16 @@ import math
 BLOCK_SIZE = 4.0  # tamanho de cada bloco (parede/corredor)
 WALL_HEIGHT = 4.0 # altura das paredes
 
+def get_map_char(level_map, andar, row, col):
+    if andar < 0 or andar >= len(level_map):
+        return None
+    if row < 0 or row >= len(level_map[andar]):
+        return None
+    if col < 0 or col >= len(level_map[andar][row]):
+        return None
+    return level_map[andar][row][col]
+
+
 def is_wall(x, y, z, level_map):
     col = int(round(x / BLOCK_SIZE))
     row = int(round(z / BLOCK_SIZE))
@@ -11,12 +21,11 @@ def is_wall(x, y, z, level_map):
     pe_y = y - 2.0
     andar = int(math.floor((pe_y + 0.5) / WALL_HEIGHT))
     
-    if andar < 0 or andar >= len(level_map) or row < 0 or row >= len(level_map[andar]) or col < 0 or col >= len(level_map[andar][0]):
+    char = get_map_char(level_map, andar, row, col)
+    if char is None:
         return True
-        
-    char = level_map[andar][row][col]
     
-    if char in ['P', 'V', ' ', 'N', 'S', 'L', 'O']:
+    if char in ['P', 'V', ' ']:
         return True
         
     if char in ['<', '>', '^', 'v']:
@@ -68,33 +77,33 @@ def get_target_y(x, y, z, level_map):
     # calcula a altura dos pés e aplica tolerância para o andar
     pe_y = y - 2.0
     andar = int(math.floor((pe_y + 0.5) / WALL_HEIGHT)) 
-    
-    if andar < 0: andar = 0
-    if andar >= len(level_map): andar = len(level_map) - 1
-    
-    if row < 0 or row >= len(level_map[andar]) or col < 0 or col >= len(level_map[andar][0]):
-        return (andar * WALL_HEIGHT) + 2.0
-    
-    char = level_map[andar][row][col]
+
+    if andar < 0:
+        andar = 0
+    if andar >= len(level_map):
+        andar = len(level_map) - 1
+
     base_y = andar * WALL_HEIGHT
-    
+    char = get_map_char(level_map, andar, row, col)
+    if char is None:
+        return base_y + 2.0
+
     # se pisou na escada do andar atual
     if char in ['<', '>', '^', 'v']:
         block_x = col * BLOCK_SIZE
         block_z = row * BLOCK_SIZE
         h = get_stair_height(x, z, block_x, block_z, BLOCK_SIZE, WALL_HEIGHT, char)
         return base_y + h + 2.0
-    
+
     # se for dar o passo para descer (lê o andar de baixo)
-    if andar > 0 and row < len(level_map[andar-1]) and col < len(level_map[andar-1][row]):
-        char_abaixo = level_map[andar-1][row][col]
-        if char_abaixo in ['<', '>', '^', 'v']:
+    if andar > 0:
+        below_char = get_map_char(level_map, andar - 1, row, col)
+        if below_char in ['<', '>', '^', 'v']:
             block_x = col * BLOCK_SIZE
             block_z = row * BLOCK_SIZE
-            h = get_stair_height(x, z, block_x, block_z, BLOCK_SIZE, WALL_HEIGHT, char_abaixo)
+            h = get_stair_height(x, z, block_x, block_z, BLOCK_SIZE, WALL_HEIGHT, below_char)
             return ((andar - 1) * WALL_HEIGHT) + h + 2.0
-    
-    # chão comum
+
     return base_y + 2.0
 
 def get_stair_height(x, z, block_x, block_z, block_size, wall_height, direction_char):
