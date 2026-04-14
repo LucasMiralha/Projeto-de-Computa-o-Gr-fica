@@ -221,41 +221,67 @@ def start_opengl(height, width):
     glEnable(GL_BLEND)
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
-def draw_cube(x, y, z, size, height, color=(0.15, 0.2, 0.15)):
+def draw_cube(x, y, z, size, height, color=(0.15, 0.2, 0.15), texture_id=None):
     half = size / 2.0
     
+    if texture_id is not None:
+        glEnable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, texture_id)
+        glColor3f(1.0, 1.0, 1.0)
+    else:
+        glDisable(GL_TEXTURE_2D)
+        glColor3f(*color)
+
     glBegin(GL_QUADS)
-    glColor3f(*color) # usa a cor dinâmica
     
     # frente
+    if texture_id is not None: glTexCoord2f(0.0, 1.0)
     glVertex3f(x - half, y,          z + half)
+    if texture_id is not None: glTexCoord2f(1.0, 1.0)
     glVertex3f(x + half, y,          z + half)
+    if texture_id is not None: glTexCoord2f(1.0, 0.0)
     glVertex3f(x + half, y + height, z + half)
+    if texture_id is not None: glTexCoord2f(0.0, 0.0)
     glVertex3f(x - half, y + height, z + half)
     
     # trás
+    if texture_id is not None: glTexCoord2f(1.0, 1.0)
     glVertex3f(x - half, y,          z - half)
+    if texture_id is not None: glTexCoord2f(1.0, 0.0)
     glVertex3f(x - half, y + height, z - half)
+    if texture_id is not None: glTexCoord2f(0.0, 0.0)
     glVertex3f(x + half, y + height, z - half)
+    if texture_id is not None: glTexCoord2f(0.0, 1.0)
     glVertex3f(x + half, y,          z - half)
     
     # esquerda
+    if texture_id is not None: glTexCoord2f(0.0, 1.0)
     glVertex3f(x - half, y,          z - half)
+    if texture_id is not None: glTexCoord2f(1.0, 1.0)
     glVertex3f(x - half, y,          z + half)
+    if texture_id is not None: glTexCoord2f(1.0, 0.0)
     glVertex3f(x - half, y + height, z + half)
+    if texture_id is not None: glTexCoord2f(0.0, 0.0)
     glVertex3f(x - half, y + height, z - half)
     
     # direita
+    if texture_id is not None: glTexCoord2f(1.0, 1.0)
     glVertex3f(x + half, y,          z - half)
+    if texture_id is not None: glTexCoord2f(1.0, 0.0)
     glVertex3f(x + half, y + height, z - half)
+    if texture_id is not None: glTexCoord2f(0.0, 0.0)
     glVertex3f(x + half, y + height, z + half)
+    if texture_id is not None: glTexCoord2f(0.0, 1.0)
     glVertex3f(x + half, y,          z + half)
     glEnd()
 
+    if texture_id is not None:
+        glDisable(GL_TEXTURE_2D)
+
 
 def draw_door(x, y, z, size, height, color=(0.4, 0.4, 0.44)):
-    half_w = (size / 2.0) * 0.85
-    half_d = (size / 2.0) * 0.3
+    half_w = size / 2.0
+    half_d = size / 2.0
     
     glBegin(GL_QUADS)
     glColor3f(*color)
@@ -285,15 +311,29 @@ def draw_door(x, y, z, size, height, color=(0.4, 0.4, 0.44)):
     glVertex3f(x + half_w, y,          z + half_d)
     glEnd()
 
-def draw_floor_tile(x, y, z, size, color=(0.1, 0.1, 0.1)):
+def draw_floor_tile(x, y, z, size, color=(0.1, 0.1, 0.1), texture_id=None):
     half = size / 2.0
+    if texture_id is not None:
+        glEnable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, texture_id)
+        glColor3f(1.0, 1.0, 1.0)
+    else:
+        glDisable(GL_TEXTURE_2D)
+        glColor3f(*color)
+
     glBegin(GL_QUADS)
-    glColor3f(*color) # usa a cor dinâmica
+    if texture_id is not None: glTexCoord2f(0.0, 1.0)
     glVertex3f(x - half, y, z - half)
+    if texture_id is not None: glTexCoord2f(0.0, 0.0)
     glVertex3f(x - half, y, z + half)
+    if texture_id is not None: glTexCoord2f(1.0, 0.0)
     glVertex3f(x + half, y, z + half)
+    if texture_id is not None: glTexCoord2f(1.0, 1.0)
     glVertex3f(x + half, y, z - half)
     glEnd()
+
+    if texture_id is not None:
+        glDisable(GL_TEXTURE_2D)
 
 def draw_u_stairs(x, y, z, size, height, direction_char):
     half = size / 2.0
