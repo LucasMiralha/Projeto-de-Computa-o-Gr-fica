@@ -1,3 +1,4 @@
+from pygame import FULLSCREEN
 import os
 import sys
 import math
@@ -47,7 +48,7 @@ def main():
     screen_height = screen_info.current_h
     screen_width = screen_info.current_w
 
-    screen = pygame.display.set_mode((screen_width, screen_height), DOUBLEBUF | OPENGL)
+    screen = pygame.display.set_mode((screen_width, screen_height), DOUBLEBUF | OPENGL | FULLSCREEN)
     pygame.display.set_caption("Tau Ceti Wars")
 
     script_path = os.path.dirname(os.path.abspath(__file__))
@@ -109,30 +110,52 @@ def main():
         text_color=(255, 255, 255, 0), align="center"
     )
 
+    def _update_save_button_state():
+        """Atualiza o estado do botão CONTINUAR baseado na existência de saves."""
+        btn_continue_main.disabled = not save_manager.has_any_save()
+
     def cb_carregar_main():
         nonlocal app_state, transition_state, target_planet, saved_level_state
-        data = save_manager.load_game()
+        main_data = save_manager.load_main_save()
         
-        # Sincroniza estado global de planetas desbloqueados
-        if data["unlocked_planets"]:
+        if main_data.get("unlocked_planets"):
             for planet in star_system:
-                if planet.name in data["unlocked_planets"]:
+                if planet.name in main_data["unlocked_planets"]:
                     planet.is_unlocked = True
-                    
-        # Se tem nível salvo na memória, puxa fase inteira direto
-        if data["level"]:
-            target_name = data["level"]["planet_name"]
+        
+        # 1. Tenta carregar o save de uma fase em andamento
+        current_lvl = main_data.get("current_level")
+        level_data = None
+        if current_lvl:
+            level_data = save_manager.load_level_save(current_lvl)
+        
+        if level_data:
             for p in star_system:
-                if p.name == target_name:
+                if p.name == level_data.get("planet_name", current_lvl):
                     target_planet = p
                     break
             if target_planet:
-                saved_level_state = data["level"]
+                saved_level_state = level_data
                 app_state = "SISTEMA_SOLAR"
-                transition_state = "START_LEVEL"
-        else:
-            # Sem fase salva, só libera o sistema solar com progresso novo
-            app_state = "SISTEMA_SOLAR"
+                transition_state = "PULLBACK" # Faz a animação da câmera antes de entrar
+                return
+                
+        # 2. Se não houver fase em andamento, inicia a fase mais avançada do zero
+        planet_order = [p.name for p in star_system]
+        most_advanced = save_manager.get_most_advanced_planet(planet_order)
+        if most_advanced:
+            for p in star_system:
+                if p.name == most_advanced:
+                    target_planet = p
+                    break
+            if target_planet:
+                saved_level_state = None  # Começa do zero
+                app_state = "SISTEMA_SOLAR"
+                transition_state = "PULLBACK" # Faz a animação da câmera antes de entrar
+                return
+                
+        # 3. Fallback: vai para o menu do sistema solar livre
+        app_state = "SISTEMA_SOLAR"
 
     def cb_novo_jogo():
         nonlocal app_state
@@ -147,25 +170,42 @@ def main():
         app_state = "SISTEMA_SOLAR"
 
     btn_continue_main = Button(
-        screen_width // 2 - 150, screen_height // 2 - 90, 300, 50, "CONTINUAR",
+        screen_width // 2 - 150, screen_height // 2 - 120, 300, 50, "CONTINUAR",
         fonte_botao, cb_carregar_main, base_color=button_color,
         hover_color=hover_button_color, text_color=font_button_color
     )
     btn_new_game = Button(
-        screen_width // 2 - 150, screen_height // 2 - 20, 300, 50, "NOVO JOGO",
+        screen_width // 2 - 150, screen_height // 2 - 50, 300, 50, "NOVO JOGO",
         fonte_botao, cb_novo_jogo, base_color=button_color,
         hover_color=hover_button_color, text_color=font_button_color
     )
     btn_select_planet = Button(
-        screen_width // 2 - 200, screen_height // 2 + 50, 400, 50, "SELECIONAR PLANETA",
+        screen_width // 2 - 200, screen_height // 2 + 20, 400, 50, "SELECIONAR PLANETA",
         fonte_botao, cb_selecionar_planeta, base_color=button_color,
         hover_color=hover_button_color, text_color=font_button_color
     )
+
+    def cb_apagar_save():
+        save_manager.delete_all_saves()
+        print("\nTodos os saves foram apagados.")
+        # Reseta o progresso na memória
+        for i, planet in enumerate(star_system):
+            planet.is_unlocked = (i == 0)
+        _update_save_button_state()
+
+    btn_apagar_save = Button(
+        screen_width // 2 - 150, screen_height // 2 + 90, 300, 50, "APAGAR SAVE",
+        fonte_botao, cb_apagar_save, base_color=button_color,
+        hover_color=hover_button_color, text_color=font_button_color
+    )
     btn_exit_main = Button(
-        screen_width // 2 - 100, screen_height // 2 + 120, 200, 50, "SAIR",
+        screen_width // 2 - 100, screen_height // 2 + 160, 200, 50, "SAIR",
         fonte_botao, cb_sair_programa, base_color=button_color,
         hover_color=hover_button_color, text_color=font_button_color
     )
+
+    # Define estado inicial do botão CONTINUAR
+    _update_save_button_state()
 
     # posições em que cada planeta vai ficar na cena
     planet_positions = [
@@ -182,8 +222,15 @@ def main():
         else:
             print(f"Aviso: Não há slots de posição suficientes para {planet.name}.")
 
-    # progresso linear: desbloqueia apenas o primeiro planeta inicialmente
-    if star_system:
+    # Carrega o main_save automaticamente ao iniciar para restaurar planetas desbloqueados
+    main_data = save_manager.load_main_save()
+    if main_data["unlocked_planets"]:
+        for planet in star_system:
+            if planet.name in main_data["unlocked_planets"]:
+                planet.is_unlocked = True
+    
+    # progresso linear: garante que pelo menos o primeiro planeta está desbloqueado
+    if star_system and not any(p.is_unlocked for p in star_system):
         star_system[0].is_unlocked = True
 
     # variaveis de controle de camera
@@ -216,6 +263,7 @@ def main():
                 btn_continue_main.handle_event(evento)
                 btn_new_game.handle_event(evento)
                 btn_select_planet.handle_event(evento)
+                btn_apagar_save.handle_event(evento)
                 btn_exit_main.handle_event(evento)
             
             elif app_state == "SISTEMA_SOLAR":
@@ -228,7 +276,7 @@ def main():
                             planet.is_unlocked = True
                         print("\nTodos os planetas foram desbloqueados")
                         # salva o global status
-                        save_manager.save_global_state([p.name for p in star_system if p.is_unlocked])
+                        save_manager.save_main_save([p.name for p in star_system if p.is_unlocked])
                 
                 # detecta o clique do mouse no planeta
                 if evento.type == pygame.MOUSEBUTTONDOWN and evento.button == 1:
@@ -242,6 +290,7 @@ def main():
             btn_continue_main.check_hover(mouse_pos)
             btn_new_game.check_hover(mouse_pos)
             btn_select_planet.check_hover(mouse_pos)
+            btn_apagar_save.check_hover(mouse_pos)
             btn_exit_main.check_hover(mouse_pos)
 
         # lógicas de estados de transição (SÓ OCORRE SE ESTIVER NO JOGO)
@@ -306,15 +355,20 @@ def main():
                 # Reinicia a música ambiente do menu
                 pygame.mixer.music.play(-1)
                 
-                if resultado_fase == "win": #{
+                if resultado_fase == "win":
+                    # Limpa o save da fase vencida
+                    save_manager.clear_level_save(target_planet.name)
                     # percorremos o sistema para encontrar o planeta que acabamos de vencer
-                    for i in range(len(star_system)): #{
-                        if star_system[i].name == target_planet.name: #{
+                    for i in range(len(star_system)):
+                        if star_system[i].name == target_planet.name:
                             # se existir um próximo planeta na lista, ele é desbloqueado
-                            if i + 1 < len(star_system): #{
+                            if i + 1 < len(star_system):
                                 star_system[i + 1].is_unlocked = True
                                 print(f"Sucesso! Próximo destino desbloqueado: {star_system[i + 1].name}")
-                                save_manager.save_game_progress(star_system)
+                            # Salva progresso global atualizado
+                            save_manager.save_main_save(
+                                [p.name for p in star_system if p.is_unlocked], None
+                            )
                             break
                 
                 # reseta todas as variáveis de visualização
@@ -322,6 +376,9 @@ def main():
                 
                 if resultado_fase == "LOAD_GAME":
                     cb_carregar_main()
+                elif resultado_fase == "RESTART":
+                    saved_level_state = None
+                    transition_state = "START_LEVEL"
                 else:
                     app_state = "SISTEMA_SOLAR"
                     transition_state = "IDLE"
@@ -333,6 +390,9 @@ def main():
                 # destrava o mouse
                 pygame.mouse.set_visible(True)
                 pygame.event.set_grab(False)
+                
+                # Atualiza estado do botão CONTINUAR após retornar da fase
+                _update_save_button_state()
 
         # --- RENDERIZAÇÃO ---
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -347,6 +407,7 @@ def main():
             btn_continue_main.draw()
             btn_new_game.draw()
             btn_select_planet.draw()
+            btn_apagar_save.draw()
             btn_exit_main.draw()
             prepare_3d()
 

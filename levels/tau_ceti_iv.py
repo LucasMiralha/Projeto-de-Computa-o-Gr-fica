@@ -36,9 +36,23 @@ def prepare_3d():
 
 # --- SISTEMA DE PATHFINDING E WAYPOINTS ---
 
+def _is_trap_tile(y, z, x, map3d):
+    """
+    Verifica se um tile é uma 'armadilha de queda': um tile andável que tem
+    uma escada no andar de baixo. Pisar nesse tile faz get_target_y puxar
+    a entidade para a escada abaixo, impedindo trânsito horizontal seguro.
+    """
+    if y <= 0:
+        return False
+    if 0 <= z < len(map3d[y-1]) and 0 <= x < len(map3d[y-1][z]):
+        if map3d[y-1][z][x] in ['<', '>', '^', 'v']:
+            return True
+    return False
+
 def get_walkable_neighbors(y, z, x, map3d):
     neighbors = []
     max_y = len(map3d)
+    stair_chars = ['<', '>', '^', 'v']
     
     # Movimentos possíveis no mesmo andar
     directions = [(0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)]
@@ -52,39 +66,115 @@ def get_walkable_neighbors(y, z, x, map3d):
             if 0 <= nz < len(map3d[ny]):
                 if 0 <= nx < len(map3d[ny][nz]):
                     if map3d[ny][nz][nx] in walkable_chars:
-                        neighbors.append((ny, nz, nx))
+                        # Bloqueia tiles armadilha (escada no andar de baixo)
+                        # para evitar que o A* crie rotas que passem por cima
+                        # de escadas — get_target_y puxaria o alien para baixo
+                        if not _is_trap_tile(ny, nz, nx, map3d):
+                            neighbors.append((ny, nz, nx))
                         
     # Movimento Vertical (Subir/Descer Escadas)
     # Proteção extra: garantir que estamos dentro dos limites antes de ler char_current
     if 0 <= y < max_y and 0 <= z < len(map3d[y]) and 0 <= x < len(map3d[y][z]):
         char_current = map3d[y][z][x]
         
-        # Se estiver em uma escada, pode subir para o bloco exatamente acima
-        if char_current in ['<', '>', '^', 'v'] and y + 1 < max_y:
-            # Verifica se o andar de cima é grande o suficiente para conter esse Z e X
-            if 0 <= z < len(map3d[y+1]) and 0 <= x < len(map3d[y+1][z]):
-                if map3d[y+1][z][x] in walkable_chars:
-                    neighbors.append((y+1, z, x))
+        # Se estiver em uma escada, pode subir para o andar de cima
+        if char_current in stair_chars and y + 1 < max_y:
+            # NÃO adiciona o bloco diretamente acima (y+1, z, x) — ele
+            # é sempre um tile armadilha (tem esta escada no andar de baixo).
+            # Em vez disso, só adiciona os vizinhos HORIZONTAIS seguros no andar de cima.
+            for dz2, dx2 in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nz2, nx2 = z + dz2, x + dx2
+                if 0 <= nz2 < len(map3d[y+1]) and 0 <= nx2 < len(map3d[y+1][nz2]):
+                    if map3d[y+1][nz2][nx2] in walkable_chars:
+                        # Só adiciona se o tile de destino NÃO for armadilha
+                        if not _is_trap_tile(y+1, nz2, nx2, map3d):
+                            neighbors.append((y+1, nz2, nx2))
                     
         # Se o bloco de baixo for uma escada, pode descer
         if y - 1 >= 0:
             # Verifica se o andar de baixo é grande o suficiente
             if 0 <= z < len(map3d[y-1]) and 0 <= x < len(map3d[y-1][z]):
-                if map3d[y-1][z][x] in ['<', '>', '^', 'v']:
+                if map3d[y-1][z][x] in stair_chars:
                     neighbors.append((y-1, z, x))
+            
+            # Também verifica os 4 vizinhos horizontais no andar de baixo
+            # (pode descer para um tile adjacente que tenha escada)
+            for dz2, dx2 in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nz2, nx2 = z + dz2, x + dx2
+                if 0 <= nz2 < len(map3d[y-1]) and 0 <= nx2 < len(map3d[y-1][nz2]):
+                    if map3d[y-1][nz2][nx2] in stair_chars:
+                        neighbors.append((y-1, nz2, nx2))
 
     return neighbors
+
+def get_stair_traversal_points(block_x, base_y, block_z, direction_char, going_up):
+    """
+    Gera 4 sub-waypoints para o alien atravessar fisicamente uma escada em U.
+    O alien precisa caminhar pelos dois lances da escada para que a física
+    (get_target_y) ajuste sua altura Y progressivamente.
+    
+    A ordem dos pontos traça o percurso em U:
+      Lance 1 (bottom) → Landing → Lance 2 (top)
+    Para descer, a ordem é invertida.
+    """
+    q = BLOCK_SIZE * 0.45  # Offset XZ dentro do bloco (1.8 para BLOCK_SIZE=4.0)
+    
+    # Y do andar de destino (usado pelo is_climbing para evitar recálculo durante a subida)
+    if going_up:
+        dest_wy = (int(base_y / WALL_HEIGHT) + 1) * WALL_HEIGHT + 2.0
+    else:
+        dest_wy = int(base_y / WALL_HEIGHT) * WALL_HEIGHT + 2.0
+    
+    # Sub-waypoints na ordem de SUBIDA, derivados da rotação em get_stair_height:
+    # '^' (sem rotação):  Lane 1 = SE, Landing = N, Lane 2 = SW
+    # 'v' (180°):         Lane 1 = NW, Landing = S, Lane 2 = NE
+    # '<' (90° CCW):      Lane 1 = NE, Landing = W, Lane 2 = SE
+    # '>' (90° CW):       Lane 1 = SW, Landing = E, Lane 2 = NW
+    stair_paths = {
+        '^': [(+q, +q), (+q, -q), (-q, -q), (-q, +q)],
+        'v': [(-q, -q), (-q, +q), (+q, +q), (+q, -q)],
+        '<': [(+q, -q), (-q, -q), (-q, +q), (+q, +q)],
+        '>': [(-q, +q), (+q, +q), (+q, -q), (-q, -q)],
+    }
+    
+    offsets = stair_paths.get(direction_char, [(0, 0)])
+    points = [(block_x + dx, dest_wy, block_z + dz) for dx, dz in offsets]
+    
+    return points if going_up else points[::-1]
 
 def generate_precise_waypoints(grid_path, map3d):
     waypoints = []
     if not grid_path: return waypoints
     
-    for y, z, x in grid_path:
-        wx = (x * BLOCK_SIZE) 
+    for i in range(len(grid_path)):
+        y, z, x = grid_path[i]
+        wx = x * BLOCK_SIZE
         wy = (y * WALL_HEIGHT) + 2.0 
-        wz = (z * BLOCK_SIZE) 
-        waypoints.append((wx, wy, wz))
+        wz = z * BLOCK_SIZE
+        
+        # Verifica se o tile atual é uma escada
+        char = None
+        if 0 <= y < len(map3d) and 0 <= z < len(map3d[y]) and 0 <= x < len(map3d[y][z]):
+            char = map3d[y][z][x]
+        
+        if char in ['<', '>', '^', 'v']:
+            # Determina se há transição de andar neste ponto do caminho
+            going_up = None
             
+            # Próximo nó está em andar acima → subindo
+            if i < len(grid_path) - 1 and grid_path[i+1][0] > y:
+                going_up = True
+            # Nó anterior estava em andar acima → descendo
+            elif i > 0 and grid_path[i-1][0] > y:
+                going_up = False
+            
+            if going_up is not None:
+                # Gera sub-waypoints que traçam o percurso da escada em U
+                traversal = get_stair_traversal_points(wx, y * WALL_HEIGHT, wz, char, going_up)
+                waypoints.extend(traversal)
+                continue  # Pula o waypoint normal do tile de escada
+        
+        waypoints.append((wx, wy, wz))
     return waypoints
 
 def a_star_3d(start_node, target_node, map3d):
@@ -106,7 +196,7 @@ def a_star_3d(start_node, target_node, map3d):
             while current in came_from:
                 path.append(current)
                 current = came_from[current]
-                
+
             return path[::-1]
 
         for neighbor in get_walkable_neighbors(current[0], current[1], current[2], map3d):
@@ -285,17 +375,24 @@ class AlienFSM:
         self.target_wy = 0.0
         self.target_wz = 0.0
         
-        self.speed = 0.12 
-        self.chasing_speed = 0.18 
+        self.speed = 0.20 
+        self.chasing_speed = 0.18
         self.target_grid = None
         self.recalc_timer = 0
         self.valid_floors = len(map3d) - 1
+        
+        # Animação de flip do sprite (simula caminhada)
+        self.is_flipped = False
+        self.flip_timer = 0
+        self.flip_interval = 20  # Troca a cada 20 frames (~0.33s a 60fps)
 
     def grid_coords(self, wx, wy, wz):
         """ Converte world coordinates para índices da matriz """
-        gx = max(0, int(wx // BLOCK_SIZE))
-        gy = max(0, int(wy // WALL_HEIGHT))
-        gz = max(0, int(wz // BLOCK_SIZE))
+        # Usa round() para consistência com physics_engine (is_wall, get_target_y)
+        gx = max(0, int(round(wx / BLOCK_SIZE)))
+        pe_y = wy - 2.0
+        gy = max(0, int(math.floor((pe_y + 0.5) / WALL_HEIGHT)))
+        gz = max(0, int(round(wz / BLOCK_SIZE)))
         return (gy, gz, gx)
 
     def get_random_walkable_node(self):
@@ -336,38 +433,45 @@ class AlienFSM:
 
     def update(self, player_x, player_y, player_z, collision_map):
         current_speed = self.chasing_speed if self.state == "CHASING" else self.speed
-        
-        # Distância em linha reta para o jogador (com o centro do alien: y + 2.0)
         dist_to_player = math.hypot(math.hypot(self.x - player_x, self.z - player_z), (self.y + 2.0) - player_y)
 
         # Lógica de Transição de Estados
         if self.state == "WANDERING":
             if not self.path_waypoints:
                 r_node = self.get_random_walkable_node()
-                
                 current_node = self.grid_coords(self.x, self.y, self.z)
                 if r_node != current_node:
-                    # REMOVIDO o + (BLOCK_SIZE / 2)
                     rx = r_node[2] * BLOCK_SIZE   
-                    ry = (r_node[0] * WALL_HEIGHT) + 2.0
+                    ry = (r_node[0] * WALL_HEIGHT) + 2.0 
                     rz = r_node[1] * BLOCK_SIZE   
                     self.set_target_and_path(rx, ry, rz)
                 
-            if dist_to_player < 18.0:
+            if dist_to_player < 20.0:
                 self.state = "CHASING"
 
         elif self.state == "HUNTING":
-            if dist_to_player < 18.0: 
+            if dist_to_player < 20.0: 
                 self.state = "CHASING"
             elif not self.path_waypoints: 
                 self.state = "WANDERING"
 
         elif self.state == "CHASING":
-            self.recalc_timer -= 1
-            if self.recalc_timer <= 0:
-                # Persegue as coordenadas reais do player
-                self.set_target_and_path(player_x, player_y - 2.0, player_z)
-                self.recalc_timer = 30 
+            # Verifica se ele está executando uma subida/descida de escada (Diferença de Y > 1.0)
+            is_climbing = False
+            if self.path_waypoints:
+                target_py = self.path_waypoints[0][1]
+                if abs(target_py - self.y) > 1.0:
+                    is_climbing = True
+            
+            # SÓ recalcula a rota para o jogador se ele estiver em terreno plano!
+            if not is_climbing:
+                self.recalc_timer -= 1
+                if self.recalc_timer <= 0:
+                    # Só recalcula se o jogador se moveu significativamente
+                    player_moved = math.hypot(player_x - self.target_wx, player_z - self.target_wz) > 4.0
+                    if player_moved or not self.path_waypoints:
+                        self.set_target_and_path(player_x, player_y, player_z)
+                    self.recalc_timer = 90
                 
             if dist_to_player > 35.0:
                 self.state = "WANDERING"
@@ -380,45 +484,51 @@ class AlienFSM:
             dx = target_px - self.x
             dz = target_pz - self.z
             
-            # Checa apenas a distância horizontal
             dist_to_wp_xz = math.hypot(dx, dz)
             
-            # Se a distância for menor ou igual ao passo deste frame, 
-            # ele "encaixa" perfeitamente no centro do waypoint para não desviar da rota.
-            if dist_to_wp_xz <= current_speed: 
-                self.x = target_px
-                self.z = target_pz
+            # Usa distância XZ para completar waypoints — a altura Y
+            # é controlada pela física (get_target_y), não pelo pathfinding
+            if dist_to_wp_xz <= 1.0: 
                 self.path_waypoints.pop(0)
             else:
-                # Movimento 'sobre trilhos'. Sem o is_wall, ele confia cegamente no A*.
-                # Isso resolve o tremor e impede que a hitbox do degrau trave o movimento horizontal.
-                self.x += (dx / dist_to_wp_xz) * current_speed
-                self.z += (dz / dist_to_wp_xz) * current_speed
+                if dist_to_wp_xz > 0.05:
+                    self.x += (dx / dist_to_wp_xz) * current_speed
+                    self.z += (dz / dist_to_wp_xz) * current_speed
+                
+                # Alterna o flip do sprite enquanto se move (animação de caminhada)
+                self.flip_timer += 1
+                if self.flip_timer >= self.flip_interval:
+                    self.is_flipped = not self.is_flipped
+                    self.flip_timer = 0
 
         # --- FÍSICA DAS ESCADAS E GRAVIDADE ---
+        # Usa atribuição direta (como o jogador faz com player_y) em vez de lerp.
+        # O lerp antigo (0.2) era muito lento para escadas — o alien nunca
+        # ganhava altura suficiente antes de sair do bloco da escada.
         target_floor_y = get_target_y(self.x, self.y, self.z, self.map3d)
-        self.y += (target_floor_y - self.y) * 0.2
+        self.y = target_floor_y
 
 # loop principal
 def start(planet, saved_state=None):
-    # definimos o conjunto de letras e sorteamos a ordem
-    letras_puzzle = ['T', 'C', 'I', 'V']
-    random.shuffle(letras_puzzle)
-    
-    # mapeamos as direções fixas para as letras sorteadas
-    puzzle_mapping = {
-        'N': letras_puzzle[0],
-        'S': letras_puzzle[1],
-        'L': letras_puzzle[2],
-        'O': letras_puzzle[3]
-    }
+    # Restaura o puzzle_mapping do save (para manter coerência) ou gera um novo
+    if saved_state and 'puzzle_mapping' in saved_state:
+        puzzle_mapping = saved_state['puzzle_mapping']
+    else:
+        letras_puzzle = ['T', 'C', 'I', 'V']
+        random.shuffle(letras_puzzle)
+        puzzle_mapping = {
+            'N': letras_puzzle[0],
+            'S': letras_puzzle[1],
+            'L': letras_puzzle[2],
+            'O': letras_puzzle[3]
+        }
 
     screen_info = pygame.display.Info()
     screen_width = screen_info.current_w
     screen_height = screen_info.current_h
     
     # garante que o contexto OpenGL está limpo e focado
-    pygame.display.set_mode((screen_width, screen_height), DOUBLEBUF | OPENGL)
+    pygame.display.set_mode((screen_width, screen_height), DOUBLEBUF | OPENGL | FULLSCREEN)
     
     init_opengl_fps(screen_width, screen_height)
     
@@ -491,7 +601,7 @@ def start(planet, saved_state=None):
                         'resolved': False
                     })
     
-    alien_ai = AlienFSM(alien_spawn_x, alien_spawn_y, alien_spawn_z, current_map)
+    alien_ai = AlienFSM(alien_spawn_x, alien_spawn_y, alien_spawn_z, collision_map)
 
     # --- VARIÁVEIS DE ESTADO DA UI ---
     interacting_comp = None # Computador atualmente aberto
@@ -499,12 +609,12 @@ def start(planet, saved_state=None):
                     
     # Verificação de posição inicial: Se tiver save state, aplica as coordenadas dele. Senão, vai no spawn padrao
     if saved_state:
-        cam_x = saved_state['cam_x']
-        cam_y = saved_state['cam_y']
-        cam_z = saved_state['cam_z']
-        player_y = saved_state['player_y']
-        yaw = saved_state['yaw']
-        pitch = saved_state['pitch']
+        cam_x = saved_state.get('cam_x', spawn_x)
+        cam_y = saved_state.get('cam_y', spawn_y)
+        cam_z = saved_state.get('cam_z', spawn_z)
+        player_y = saved_state.get('player_y', cam_y)
+        yaw = saved_state.get('yaw', 0.0)
+        pitch = saved_state.get('pitch', 0.0)
     else:
         cam_x, cam_y, cam_z = spawn_x, spawn_y, spawn_z
         player_y = cam_y
@@ -540,10 +650,31 @@ def start(planet, saved_state=None):
     alien_tex = load_alien_texture(caminho_alien)
     
     player_stamina = 100.0
+    stamina_exhausted = False  # Flag anti-abuso: bloqueia corrida até recuperar 50
+
+    # Restauração de estado adicional do save (stamina, alien, computadores)
+    if saved_state:
+        player_stamina = saved_state.get('player_stamina', 100.0)
+        stamina_exhausted = saved_state.get('stamina_exhausted', False)
+        
+        # Restaura posição e estado do alien
+        if 'alien_x' in saved_state:
+            alien_ai.x = saved_state['alien_x']
+            alien_ai.y = saved_state['alien_y']
+            alien_ai.z = saved_state['alien_z']
+            alien_ai.state = saved_state.get('alien_state', 'WANDERING')
+            alien_ai.path_waypoints = []  # Limpa rota antiga, vai recalcular
+        
+        # Restaura quais computadores já foram resolvidos
+        resolved_list = saved_state.get('computers_resolved', [])
+        for i, is_resolved in enumerate(resolved_list):
+            if i < len(computers_data):
+                computers_data[i]['resolved'] = is_resolved
 
     running = True
     is_paused = False
     result_state = "MENU"
+    esc_held = False
 
     def cb_continuar():
         nonlocal is_paused
@@ -553,7 +684,32 @@ def start(planet, saved_state=None):
         pygame.mouse.get_rel()
         
     def cb_salvar_jogo():
-        save_manager.save_level_state(cam_x, cam_y, cam_z, player_y, yaw, pitch, planet.name)
+        # Monta o dict com TODO o estado da fase
+        level_data = {
+            'planet_name': planet.name,
+            # Jogador
+            'cam_x': cam_x,
+            'cam_y': cam_y,
+            'cam_z': cam_z,
+            'player_y': player_y,
+            'yaw': yaw,
+            'pitch': pitch,
+            'player_stamina': player_stamina,
+            'stamina_exhausted': stamina_exhausted,
+            # Puzzle
+            'puzzle_mapping': puzzle_mapping,
+            # Computadores
+            'computers_resolved': [c['resolved'] for c in computers_data],
+            # Alien
+            'alien_x': alien_ai.x,
+            'alien_y': alien_ai.y,
+            'alien_z': alien_ai.z,
+            'alien_state': alien_ai.state,
+        }
+        save_manager.save_level_save(planet.name, level_data)
+        # Atualiza o main_save para apontar para esta fase
+        main = save_manager.load_main_save()
+        save_manager.save_main_save(main.get('unlocked_planets', []), planet.name)
         # Retorna ao jogo logo em seguida para um fluxo suave
         cb_continuar()
         
@@ -612,6 +768,24 @@ def start(planet, saved_state=None):
 
         now = pygame.time.get_ticks()
 
+        keys_raw = pygame.key.get_pressed()
+        
+        if (keys_raw[K_ESCAPE] or keys_raw[K_p]) and not esc_held:
+            esc_held = True
+            if interacting_comp:
+                interacting_comp = None # Sai do PC
+                pygame.mouse.set_visible(False)
+                pygame.event.set_grab(True)
+            else:
+                if is_paused:
+                    cb_continuar()
+                else:
+                    is_paused = True
+                    pygame.mouse.set_visible(True)
+                    pygame.event.set_grab(False)
+        elif not (keys_raw[K_ESCAPE] or keys_raw[K_p]):
+            esc_held = False
+
         # leitor de eventos
         for event in pygame.event.get():
             if event.type == QUIT:
@@ -627,17 +801,13 @@ def start(planet, saved_state=None):
 
             if event.type == KEYDOWN:
                 if interacting_comp:
-                    if event.key == K_ESCAPE:
-                        interacting_comp = None # Sai do PC
-                        pygame.mouse.set_visible(False)
-                        pygame.event.set_grab(True)
-                    elif event.key == K_BACKSPACE:
+                    if event.key == K_BACKSPACE:
                         interacting_comp['current_input'] = interacting_comp['current_input'][:-1]
                     elif event.key == K_RETURN or event.key == K_KP_ENTER:
                         # Valida a senha
-                        if interacting_comp['current_input'] == interacting_comp['expected']:
+                        if interacting_comp['current_input'] == interacting_comp['expected'] or interacting_comp['current_input'] == '@':
                             interacting_comp['resolved'] = True
-                            alien_ai.trigger_hunt(interacting_comp['x'], interacting_comp['y'], interacting_comp['z'])
+                            alien_ai.trigger_hunt(interacting_comp['x'], interacting_comp['y'] + 2.0, interacting_comp['z'])
                             interacting_comp = None # Fecha a tela em caso de sucesso
                             pygame.mouse.set_visible(False)
                             pygame.event.set_grab(True)
@@ -645,25 +815,17 @@ def start(planet, saved_state=None):
                             # Errou! Pisca a tela de vermelho por 300ms e apaga o input
                             error_blink_timer = now + 300
                             interacting_comp['current_input'] = ""
-                            alien_ai.trigger_hunt(interacting_comp['x'], interacting_comp['y'], interacting_comp['z'])
+                            alien_ai.trigger_hunt(interacting_comp['x'], interacting_comp['y'] + 2.0, interacting_comp['z'])
                     else:
-                        # captura qualquer letra ou número
+                        # captura qualquer letra ou número, além do cheat '@'
                         char_digitado = event.unicode.upper()
                         
-                        if char_digitado.isalnum():
-                            if len(interacting_comp['current_input']) < len(interacting_comp['expected']):
+                        if char_digitado.isalnum() or char_digitado == '@':
+                            if len(interacting_comp['current_input']) < len(interacting_comp['expected']) or char_digitado == '@':
                                 interacting_comp['current_input'] += char_digitado
 
                 else:
-                    if event.key == K_ESCAPE:
-                        if is_paused:
-                            cb_continuar()
-                        else:
-                            is_paused = True
-                            pygame.mouse.set_visible(True)
-                            pygame.event.set_grab(False)
-                    
-                    elif event.key == K_e and near_comp and not near_comp['resolved']: 
+                    if event.key == K_e and near_comp and not near_comp['resolved']: 
                         if not is_paused: 
                             # Abre a interface do computador
                             interacting_comp = near_comp
@@ -705,7 +867,14 @@ def start(planet, saved_state=None):
             next_x = cam_x
             next_z = cam_z
 
-            if keys[K_LSHIFT] and player_stamina > 0:
+            # Mecânica anti-abuso de stamina:
+            # Se a stamina chegar a 0, bloqueia corrida até recuperar 50
+            if player_stamina <= 0:
+                stamina_exhausted = True
+            if stamina_exhausted and player_stamina >= 50:
+                stamina_exhausted = False
+            
+            if keys[K_LSHIFT] and player_stamina > 0 and not stamina_exhausted:
                 move_speed = 0.28 # velocidade de Corrida
                 player_stamina = max(0.0, player_stamina - 0.6)
             else:
@@ -741,6 +910,12 @@ def start(planet, saved_state=None):
             cam_y += (player_y - cam_y) * 0.15
 
             alien_ai.update(cam_x, player_y, cam_z, collision_map)
+
+            # --- GAME OVER: Alien encostou no jogador ---
+            dist_alien = math.hypot(cam_x - alien_ai.x, cam_z - alien_ai.z)
+            if dist_alien < 2.0 and abs(player_y - alien_ai.y) < 3.0:
+                result_state = "loss"
+                running = False
 
         # renderização
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -790,7 +965,7 @@ def start(planet, saved_state=None):
             tela_cor = (0.0, 0.8, 0.2) if comp['resolved'] else (0.0, 0.0, 0.6)
             draw_computer(comp['x'], comp['y'], comp['z'], 4.0, 4.0, screen_color=tela_cor)
 
-        draw_billboard_alien(alien_ai.x, alien_ai.y - 2.0, alien_ai.z, alien_tex, 4.0, False, yaw)
+        draw_billboard_alien(alien_ai.x, alien_ai.y - 2.0, alien_ai.z, alien_tex, 4.0, alien_ai.is_flipped, yaw)
 
         # --- RENDERIZAÇÃO 2D (HUD E UI DO PC) ---
         prepare_2d(screen_width, screen_height)
@@ -807,7 +982,9 @@ def start(planet, saved_state=None):
         hud_data = pygame.image.tostring(hud_surface, "RGBA", True)
         hud_w, hud_h = hud_surface.get_size()
         
-        stamina_surface = hud_font.render(f"Stamina: {int(player_stamina)}/100", True, (130, 200, 255))
+        # Cor da stamina: vermelho se exausta, azul claro se normal
+        stamina_color = (255, 80, 80) if stamina_exhausted else (130, 200, 255)
+        stamina_surface = hud_font.render(f"Stamina: {int(player_stamina)}/100", True, stamina_color)
         stamina_data = pygame.image.tostring(stamina_surface, "RGBA", True)
         stam_w, stam_h = stamina_surface.get_size()
 
@@ -819,28 +996,6 @@ def start(planet, saved_state=None):
 
         glRasterPos2f(20, 60) # Posição da stamina logo abaixo
         glDrawPixels(stam_w, stam_h, GL_RGBA, GL_UNSIGNED_BYTE, stamina_data)
-
-        # >>> TEXTO DE DEBUG DO ALIEN (Canto Superior Direito) <<<
-        grid_pos = alien_ai.grid_coords(alien_ai.x, alien_ai.y, alien_ai.z)
-        
-        # Formata o texto
-        txt_linha1 = f"ALIEN: {alien_ai.state} | WPs Restantes: {len(alien_ai.path_waypoints)}"
-        txt_linha2 = f"Pos Matriz: {grid_pos} | Alvo Físico: ({int(alien_ai.target_wx)}, {int(alien_ai.target_wy)}, {int(alien_ai.target_wz)})"
-        
-        # Renderiza as superfícies
-        surf1 = hud_font.render(txt_linha1, True, (255, 100, 100))
-        surf2 = hud_font.render(txt_linha2, True, (255, 100, 100))
-        
-        w1, h1 = surf1.get_size()
-        w2, h2 = surf2.get_size()
-        
-        # Desenha a Linha 1 alinhada à direita
-        glRasterPos2f(screen_width - w1 - 20, 30)
-        glDrawPixels(w1, h1, GL_RGBA, GL_UNSIGNED_BYTE, pygame.image.tostring(surf1, "RGBA", True))
-        
-        # Desenha a Linha 2 logo abaixo
-        glRasterPos2f(screen_width - w2 - 20, 30 + h1 + 5)
-        glDrawPixels(w2, h2, GL_RGBA, GL_UNSIGNED_BYTE, pygame.image.tostring(surf2, "RGBA", True))
 
         # 2. Prompt de Interação (Centro Inferior)
         if near_comp and not near_comp['resolved'] and not interacting_comp: 

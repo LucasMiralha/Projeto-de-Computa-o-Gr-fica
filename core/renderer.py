@@ -253,6 +253,38 @@ def draw_cube(x, y, z, size, height, color=(0.15, 0.2, 0.15)):
     glEnd()
 
 
+def draw_door(x, y, z, size, height, color=(0.4, 0.4, 0.44)):
+    half_w = (size / 2.0) * 0.85
+    half_d = (size / 2.0) * 0.3
+    
+    glBegin(GL_QUADS)
+    glColor3f(*color)
+    
+    # frente
+    glVertex3f(x - half_w, y,          z + half_d)
+    glVertex3f(x + half_w, y,          z + half_d)
+    glVertex3f(x + half_w, y + height, z + half_d)
+    glVertex3f(x - half_w, y + height, z + half_d)
+    
+    # trás
+    glVertex3f(x - half_w, y,          z - half_d)
+    glVertex3f(x - half_w, y + height, z - half_d)
+    glVertex3f(x + half_w, y + height, z - half_d)
+    glVertex3f(x + half_w, y,          z - half_d)
+    
+    # esquerda
+    glVertex3f(x - half_w, y,          z - half_d)
+    glVertex3f(x - half_w, y,          z + half_d)
+    glVertex3f(x - half_w, y + height, z + half_d)
+    glVertex3f(x - half_w, y + height, z - half_d)
+    
+    # direita
+    glVertex3f(x + half_w, y,          z - half_d)
+    glVertex3f(x + half_w, y + height, z - half_d)
+    glVertex3f(x + half_w, y + height, z + half_d)
+    glVertex3f(x + half_w, y,          z + half_d)
+    glEnd()
+
 def draw_floor_tile(x, y, z, size, color=(0.1, 0.1, 0.1)):
     half = size / 2.0
     glBegin(GL_QUADS)

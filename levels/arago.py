@@ -517,7 +517,7 @@ def start(planet, saved_state=None):
     screen_width = screen_info.current_w
     screen_height = screen_info.current_h
 
-    pygame.display.set_mode((screen_width, screen_height), DOUBLEBUF | OPENGL)
+    pygame.display.set_mode((screen_width, screen_height), DOUBLEBUF | OPENGL| FULLSCREEN)
     init_opengl_fps(screen_width, screen_height)
 
     pygame.mouse.set_visible(False)
@@ -542,14 +542,18 @@ def start(planet, saved_state=None):
     clock = pygame.time.Clock()
     fps = 60
 
-    if planet.layout == "random":
-        current_map = generate_arago_map()
+    # Restaura o mapa do save (essencial para mapas "random") ou gera um novo
+    if saved_state and 'map_data' in saved_state:
+        current_map = saved_state['map_data']
     else:
-        # Se for uma matriz 3D da main (lista contendo andares), pega o andar 0
-        if isinstance(planet.layout, list) and isinstance(planet.layout[0], list):
-            current_map = planet.layout[0]
+        if planet.layout == "random":
+            current_map = generate_arago_map()
         else:
-            current_map = planet.layout
+            # Se for uma matriz 3D da main (lista contendo andares), pega o andar 0
+            if isinstance(planet.layout, list) and isinstance(planet.layout[0], list):
+                current_map = planet.layout[0]
+            else:
+                current_map = planet.layout
     
     level_colors = LEVEL_COLORS.get(planet.name, LEVEL_COLORS["DEFAULT"])
 
@@ -589,14 +593,18 @@ def start(planet, saved_state=None):
             elif char == "C":
                 creature_spawn = world_pos
 
-    if planet.name == "Arago":
-        item_positions = choose_random_item_positions(
-            item_candidate_positions,
-            [(cam_x, cam_z), exit_position, creature_spawn],
-            TOTAL_ARAGO_ITEMS,
-        )
+    # Restaura itens do save ou gera novos
+    if saved_state and 'item_positions' in saved_state:
+        item_positions = [tuple(pos) for pos in saved_state['item_positions']]
     else:
-        item_positions = item_candidate_positions[:]
+        if planet.name == "Arago":
+            item_positions = choose_random_item_positions(
+                item_candidate_positions,
+                [(cam_x, cam_z), exit_position, creature_spawn],
+                TOTAL_ARAGO_ITEMS,
+            )
+        else:
+            item_positions = item_candidate_positions[:]
 
     items_collected = 0
     collected_items = set()
@@ -617,7 +625,134 @@ def start(planet, saved_state=None):
     delta_seconds = 1.0 / fps
     previous_player_position = (cam_x, cam_z)
 
+    # Restauração completa do estado salvo
+    if saved_state:
+        cam_x = saved_state.get('cam_x', cam_x)
+        cam_z = saved_state.get('cam_z', cam_z)
+        yaw = saved_state.get('yaw', yaw)
+        pitch = saved_state.get('pitch', pitch)
+        stamina = saved_state.get('stamina', max_stamina)
+        exhausted = saved_state.get('exhausted', False)
+        items_collected = saved_state.get('items_collected', 0)
+        # Restaura itens coletados como set de tuplas
+        collected_list = saved_state.get('collected_items', [])
+        collected_items = set(tuple(pos) for pos in collected_list)
+        # Restaura criatura
+        creature_x = saved_state.get('creature_x', creature_x)
+        creature_z = saved_state.get('creature_z', creature_z)
+        creature_visible = saved_state.get('creature_visible', creature_visible)
+        previous_player_position = (cam_x, cam_z)
+
+    # --- MENU DE PAUSA ---
+    import os as _os
+    _script_path = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    _font_path = _os.path.join(_script_path, 'Assets', 'Fonts', 'united-sans-reg-bold.otf')
+    
+    try:
+        fonte_botao = pygame.font.Font(_font_path, 28)
+    except Exception:
+        fonte_botao = pygame.font.SysFont('Arial', 28, bold=True)
+    fonte_titulo = pygame.font.SysFont('Arial', 72, bold=True)
+
+    _btn_color = (0, 0, 0, 0)
+    _font_btn_color = (95, 198, 139, 255)
+    _hover_btn_color = (95, 198, 139, 150)
+    is_paused = False
+    is_game_over = False
+
+    title_pause = Title(
+        screen_width // 2 - 300, screen_height // 2 - 200, 600, 100,
+        "PAUSADO", fonte_titulo, bg_color=(0, 0, 0, 0),
+        text_color=(255, 255, 255, 255), align="center"
+    )
+
+    def cb_continuar():
+        nonlocal is_paused
+        is_paused = False
+        pygame.mouse.set_visible(False)
+        pygame.event.set_grab(True)
+        pygame.mouse.get_rel()
+
+    def cb_salvar_jogo():
+        level_data = {
+            'planet_name': planet.name,
+            'cam_x': cam_x,
+            'cam_z': cam_z,
+            'yaw': yaw,
+            'pitch': pitch,
+            'stamina': stamina,
+            'exhausted': exhausted,
+            'items_collected': items_collected,
+            'collected_items': [list(pos) for pos in collected_items],
+            'item_positions': [list(pos) for pos in item_positions],
+            'creature_x': creature_x,
+            'creature_z': creature_z,
+            'creature_visible': creature_visible,
+            'map_data': current_map,
+        }
+        save_manager.save_level_save(planet.name, level_data)
+        main = save_manager.load_main_save()
+        save_manager.save_main_save(main.get('unlocked_planets', []), planet.name)
+        cb_continuar()
+
+    def cb_carregar_jogo():
+        nonlocal running, result_state
+        result_state = "LOAD_GAME"
+        running = False
+
+    def cb_voltar_menu():
+        nonlocal running, result_state
+        result_state = "MENU"
+        running = False
+
+    def cb_sair_desktop():
+        pygame.quit()
+        sys.exit()
+
+    btn_continue = Button(
+        screen_width // 2 - 150, screen_height // 2 - 100, 300, 50, "CONTINUAR",
+        fonte_botao, cb_continuar, base_color=_btn_color,
+        hover_color=_hover_btn_color, text_color=_font_btn_color
+    )
+    btn_save = Button(
+        screen_width // 2 - 150, screen_height // 2 - 30, 300, 50, "SALVAR",
+        fonte_botao, cb_salvar_jogo, base_color=_btn_color,
+        hover_color=_hover_btn_color, text_color=_font_btn_color
+    )
+    btn_load = Button(
+        screen_width // 2 - 150, screen_height // 2 + 40, 300, 50, "CARREGAR",
+        fonte_botao, cb_carregar_jogo, base_color=_btn_color,
+        hover_color=_hover_btn_color, text_color=_font_btn_color
+    )
+    btn_menu = Button(
+        screen_width // 2 - 150, screen_height // 2 + 110, 300, 50, "VOLTAR AO MENU",
+        fonte_botao, cb_voltar_menu, base_color=_btn_color,
+        hover_color=_hover_btn_color, text_color=_font_btn_color
+    )
+    btn_exit = Button(
+        screen_width // 2 - 150, screen_height // 2 + 180, 300, 50, "SAIR",
+        fonte_botao, cb_sair_desktop, base_color=_btn_color,
+        hover_color=_hover_btn_color, text_color=_font_btn_color
+    )
+    
+    def cb_restart_level():
+        nonlocal running, result_state
+        result_state = "RESTART"
+        running = False
+        
+    title_game_over = Title(
+        screen_width // 2 - 300, screen_height // 2 - 200, 600, 100,
+        "VOCÊ MORREU", fonte_titulo, bg_color=(0, 0, 0, 0),
+        text_color=(255, 50, 50, 255), align="center"
+    )
+    btn_restart_go = Button(
+        screen_width // 2 - 150, screen_height // 2 - 100, 300, 50, "TENTAR DE NOVO",
+        fonte_botao, cb_restart_level, base_color=_btn_color,
+        hover_color=_hover_btn_color, text_color=_font_btn_color
+    )
+
     running = True
+    esc_held = False
 
     while running:
         player_position = (cam_x, cam_z)
@@ -632,10 +767,36 @@ def start(planet, saved_state=None):
         creature_profile = get_creature_profile(items_collected)
         creature_state = creature_profile["state"]
 
+        keys_raw = pygame.key.get_pressed()
+        if not is_game_over:
+            if (keys_raw[K_ESCAPE] or keys_raw[K_p]) and not esc_held:
+                esc_held = True
+                if is_paused:
+                    cb_continuar()
+                else:
+                    is_paused = True
+                    pygame.mouse.set_visible(True)
+                    pygame.event.set_grab(False)
+            elif not (keys_raw[K_ESCAPE] or keys_raw[K_p]):
+                esc_held = False
+
         for event in pygame.event.get():
             if event.type == QUIT:
                 pygame.quit()
                 sys.exit()
+
+            # Menu de pausa: captura eventos de UI
+            if is_game_over:
+                btn_restart_go.handle_event(event)
+                btn_load.handle_event(event)
+                btn_menu.handle_event(event)
+                btn_exit.handle_event(event)
+            elif is_paused:
+                btn_continue.handle_event(event)
+                btn_save.handle_event(event)
+                btn_load.handle_event(event)
+                btn_menu.handle_event(event)
+                btn_exit.handle_event(event)
 
             if event.type == KEYDOWN:
                 if event.key == K_ESCAPE:
@@ -668,150 +829,174 @@ def start(planet, saved_state=None):
                     else:
                         status_message = "Nenhum item ou saida ao alcance."
 
-        mouse_dx, mouse_dy = pygame.mouse.get_rel()
-        yaw += mouse_dx * mouse_sensitivity
-        pitch += mouse_dy * mouse_sensitivity
-        pitch = max(-89.0, min(89.0, pitch))
+        # Atualiza hover dos botões de pausa
+        if is_game_over:
+            mouse_pos = pygame.mouse.get_pos()
+            btn_restart_go.check_hover(mouse_pos)
+            btn_load.check_hover(mouse_pos)
+            btn_menu.check_hover(mouse_pos)
+            btn_exit.check_hover(mouse_pos)
+        elif is_paused:
+            mouse_pos = pygame.mouse.get_pos()
+            btn_continue.check_hover(mouse_pos)
+            btn_save.check_hover(mouse_pos)
+            btn_load.check_hover(mouse_pos)
+            btn_menu.check_hover(mouse_pos)
+            btn_exit.check_hover(mouse_pos)
 
-        keys = pygame.key.get_pressed()
-        yaw_rad = math.radians(yaw)
-        front_x = math.sin(yaw_rad)
-        front_z = -math.cos(yaw_rad)
-        right_x = math.cos(yaw_rad)
-        right_z = math.sin(yaw_rad)
-        is_moving = keys[K_w] or keys[K_s] or keys[K_a] or keys[K_d]
-        wants_to_sprint = keys[K_LSHIFT] or keys[K_RSHIFT]
-
-        if exhausted and stamina >= sprint_recover_threshold:
-            exhausted = False
-
-        can_start_sprint = wants_to_sprint and is_moving and not exhausted and stamina > min_stamina_to_sprint
-        can_continue_sprint = wants_to_sprint and is_moving and not exhausted and sprinting and stamina > 0.0
-        can_sprint = can_continue_sprint or can_start_sprint
-        sprinting = can_sprint
-        current_move_speed = move_speed * sprint_multiplier if can_sprint else move_speed
-
-        if can_sprint:
-            stamina = max(0.0, stamina - (stamina_drain_per_second * delta_seconds))
-            if stamina <= 0.0:
-                exhausted = True
-                stamina_recovery_timer = stamina_recovery_delay
-                sprinting = False
+        if is_paused or is_game_over:
+            # Pula a lógica de jogo, vai direto pra renderização
+            pass
         else:
-            if stamina_recovery_timer > 0.0:
-                stamina_recovery_timer = max(0.0, stamina_recovery_timer - delta_seconds)
+            mouse_dx, mouse_dy = pygame.mouse.get_rel()
+            yaw += mouse_dx * mouse_sensitivity
+            pitch += mouse_dy * mouse_sensitivity
+            pitch = max(-89.0, min(89.0, pitch))
+
+            keys = pygame.key.get_pressed()
+            yaw_rad = math.radians(yaw)
+            front_x = math.sin(yaw_rad)
+            front_z = -math.cos(yaw_rad)
+            right_x = math.cos(yaw_rad)
+            right_z = math.sin(yaw_rad)
+            is_moving = keys[K_w] or keys[K_s] or keys[K_a] or keys[K_d]
+            wants_to_sprint = keys[K_LSHIFT] or keys[K_RSHIFT]
+
+            if exhausted and stamina >= sprint_recover_threshold:
+                exhausted = False
+
+            can_start_sprint = wants_to_sprint and is_moving and not exhausted and stamina > min_stamina_to_sprint
+            can_continue_sprint = wants_to_sprint and is_moving and not exhausted and sprinting and stamina > 0.0
+            can_sprint = can_continue_sprint or can_start_sprint
+            sprinting = can_sprint
+            current_move_speed = move_speed * sprint_multiplier if can_sprint else move_speed
+
+            if can_sprint:
+                stamina = max(0.0, stamina - (stamina_drain_per_second * delta_seconds))
+                if stamina <= 0.0:
+                    exhausted = True
+                    stamina_recovery_timer = stamina_recovery_delay
+                    sprinting = False
             else:
-                stamina = min(max_stamina, stamina + (stamina_recover_per_second * delta_seconds))
+                if stamina_recovery_timer > 0.0:
+                    stamina_recovery_timer = max(0.0, stamina_recovery_timer - delta_seconds)
+                else:
+                    stamina = min(max_stamina, stamina + (stamina_recover_per_second * delta_seconds))
 
-        next_x = cam_x
-        next_z = cam_z
+            next_x = cam_x
+            next_z = cam_z
 
-        if keys[K_w]:
-            next_x += front_x * current_move_speed
-            next_z += front_z * current_move_speed
-        if keys[K_s]:
-            next_x -= front_x * current_move_speed
-            next_z -= front_z * current_move_speed
-        if keys[K_a]:
-            next_x -= right_x * current_move_speed
-            next_z -= right_z * current_move_speed
-        if keys[K_d]:
-            next_x += right_x * current_move_speed
-            next_z += right_z * current_move_speed
+            if keys[K_w]:
+                next_x += front_x * current_move_speed
+                next_z += front_z * current_move_speed
+            if keys[K_s]:
+                next_x -= front_x * current_move_speed
+                next_z -= front_z * current_move_speed
+            if keys[K_a]:
+                next_x -= right_x * current_move_speed
+                next_z -= right_z * current_move_speed
+            if keys[K_d]:
+                next_x += right_x * current_move_speed
+                next_z += right_z * current_move_speed
 
-        if not is_wall(next_x + (player_radius if next_x > cam_x else -player_radius), cam_z, current_map):
-            cam_x = next_x
-        if not is_wall(cam_x, next_z + (player_radius if next_z > cam_z else -player_radius), current_map):
-            cam_z = next_z
+            if not is_wall(next_x + (player_radius if next_x > cam_x else -player_radius), cam_z, current_map):
+                cam_x = next_x
+            if not is_wall(cam_x, next_z + (player_radius if next_z > cam_z else -player_radius), current_map):
+                cam_z = next_z
 
-        player_position = (cam_x, cam_z)
-        remaining_items = [pos for pos in item_positions if pos not in collected_items]
-        near_item_position = None
-        for item_pos in remaining_items:
-            if world_distance(player_position, item_pos) <= INTERACT_DISTANCE:
-                near_item_position = item_pos
-                break
-        near_exit = world_distance(player_position, exit_position) <= INTERACT_DISTANCE
-        exit_unlocked = items_collected >= TOTAL_ARAGO_ITEMS
-        creature_profile = get_creature_profile(items_collected)
-        creature_state = creature_profile["state"]
+            player_position = (cam_x, cam_z)
+            remaining_items = [pos for pos in item_positions if pos not in collected_items]
+            near_item_position = None
+            for item_pos in remaining_items:
+                if world_distance(player_position, item_pos) <= INTERACT_DISTANCE:
+                    near_item_position = item_pos
+                    break
+            near_exit = world_distance(player_position, exit_position) <= INTERACT_DISTANCE
+            exit_unlocked = items_collected >= TOTAL_ARAGO_ITEMS
+            creature_profile = get_creature_profile(items_collected)
+            creature_state = creature_profile["state"]
 
-        now = pygame.time.get_ticks()
-        if creature_state != last_creature_state and items_collected > 0:
-            play_sound(sound_enabled, sounds, "danger")
-            last_creature_state = creature_state
-
-        if items_collected > 0 and creature_spawn and creature_visible and now >= creature_wake_time:
-            player_distance = world_distance(player_position, (creature_x, creature_z))
-            should_chase_player = (
-                items_collected >= 5 or player_distance <= creature_profile["awareness_radius"]
-            )
-
-            if should_chase_player and now >= next_danger_sound_time:
+            now = pygame.time.get_ticks()
+            if creature_state != last_creature_state and items_collected > 0:
                 play_sound(sound_enabled, sounds, "danger")
-                next_danger_sound_time = now + max(550, 1300 - (items_collected * 110))
+                last_creature_state = creature_state
 
-            if should_chase_player:
-                player_velocity_x = player_position[0] - previous_player_position[0]
-                player_velocity_z = player_position[1] - previous_player_position[1]
-                velocity_length = math.hypot(player_velocity_x, player_velocity_z)
-                predictive_scale = min(BLOCK_SIZE * 1.25, velocity_length * 10.0)
-                predicted_target = (
-                    player_position[0] + (player_velocity_x * predictive_scale),
-                    player_position[1] + (player_velocity_z * predictive_scale),
+            if items_collected > 0 and creature_spawn and creature_visible and now >= creature_wake_time:
+                player_distance = world_distance(player_position, (creature_x, creature_z))
+                should_chase_player = (
+                    items_collected >= 5 or player_distance <= creature_profile["awareness_radius"]
                 )
-                if items_collected >= 4:
-                    creature_target_position = get_intersection_cutoff_target(
-                        current_map,
-                        player_position,
-                        (creature_x, creature_z),
-                        predicted_target,
+
+                if should_chase_player and now >= next_danger_sound_time:
+                    play_sound(sound_enabled, sounds, "danger")
+                    next_danger_sound_time = now + max(550, 1300 - (items_collected * 110))
+
+                if should_chase_player:
+                    player_velocity_x = player_position[0] - previous_player_position[0]
+                    player_velocity_z = player_position[1] - previous_player_position[1]
+                    velocity_length = math.hypot(player_velocity_x, player_velocity_z)
+                    predictive_scale = min(BLOCK_SIZE * 1.25, velocity_length * 10.0)
+                    predicted_target = (
+                        player_position[0] + (player_velocity_x * predictive_scale),
+                        player_position[1] + (player_velocity_z * predictive_scale),
                     )
+                    if items_collected >= 4:
+                        creature_target_position = get_intersection_cutoff_target(
+                            current_map,
+                            player_position,
+                            (creature_x, creature_z),
+                            predicted_target,
+                        )
+                    else:
+                        creature_target_position = predicted_target
                 else:
-                    creature_target_position = predicted_target
-            else:
-                if remaining_items:
-                    creature_target_position = min(
-                        remaining_items,
-                        key=lambda item_pos: world_distance((creature_x, creature_z), item_pos),
-                    )
-                else:
-                    creature_target_position = exit_position if exit_position else player_position
+                    if remaining_items:
+                        creature_target_position = min(
+                            remaining_items,
+                            key=lambda item_pos: world_distance((creature_x, creature_z), item_pos),
+                        )
+                    else:
+                        creature_target_position = exit_position if exit_position else player_position
 
-            if now >= next_path_refresh:
-                creature_path = find_path(current_map, (creature_x, creature_z), creature_target_position)
-                if not creature_path and should_chase_player:
-                    creature_path = find_path(current_map, (creature_x, creature_z), player_position)
-                    creature_target_position = player_position
-                next_path_refresh = now + creature_profile["path_refresh_ms"]
+                if now >= next_path_refresh:
+                    creature_path = find_path(current_map, (creature_x, creature_z), creature_target_position)
+                    if not creature_path and should_chase_player:
+                        creature_path = find_path(current_map, (creature_x, creature_z), player_position)
+                        creature_target_position = player_position
+                    next_path_refresh = now + creature_profile["path_refresh_ms"]
 
-            target_x, target_z = creature_target_position
-            if len(creature_path) > 1:
-                next_row, next_col = creature_path[1]
-                target_x, target_z = cell_to_world(next_row, next_col)
+                target_x, target_z = creature_target_position
+                if len(creature_path) > 1:
+                    next_row, next_col = creature_path[1]
+                    target_x, target_z = cell_to_world(next_row, next_col)
 
-            delta_x = target_x - creature_x
-            delta_z = target_z - creature_z
-            distance = math.hypot(delta_x, delta_z)
-            creature_speed = creature_profile["speed"]
+                delta_x = target_x - creature_x
+                delta_z = target_z - creature_z
+                distance = math.hypot(delta_x, delta_z)
+                creature_speed = creature_profile["speed"]
 
-            if distance > 0.01:
-                step = min(creature_speed, distance)
-                creature_x += (delta_x / distance) * step
-                creature_z += (delta_z / distance) * step
-                creature_yaw = math.degrees(math.atan2(delta_x, -delta_z))
+                if distance > 0.01:
+                    step = min(creature_speed, distance)
+                    creature_x += (delta_x / distance) * step
+                    creature_z += (delta_z / distance) * step
+                    creature_yaw = math.degrees(math.atan2(delta_x, -delta_z))
 
-            if should_chase_player and player_distance <= 1.2:
-                status_message = "A criatura alcancou voce."
-                if sound_enabled and "defeat" in sounds:
-                    sounds["defeat"].play()
-                    pygame.time.delay(700)
-                result_state = "DERROTA"
-                running = False
-        elif items_collected > 0 and creature_spawn and creature_visible and now < creature_wake_time:
-            status_message = "Voce ouviu algo se movendo pelos corredores."
+                if should_chase_player and player_distance <= 1.2:
+                    if not is_game_over:
+                        status_message = "A criatura alcancou voce."
+                        try:
+                            pygame.mixer.Sound(_os.path.join(_script_path, 'Assets', 'Sounds', 'ai-01.mp3')).play()
+                        except Exception as e:
+                            print(f"Erro no som principal: {e}")
+                            if sound_enabled and "defeat" in sounds:
+                                sounds["defeat"].play() # Fallback pro som original do sistema se falhar
+                        is_game_over = True
+                        pygame.mouse.set_visible(True)
+                        pygame.event.set_grab(False)
+            elif items_collected > 0 and creature_spawn and creature_visible and now < creature_wake_time:
+                status_message = "Voce ouviu algo se movendo pelos corredores."
 
-        previous_player_position = player_position
+            previous_player_position = player_position
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glLoadIdentity()
@@ -914,6 +1099,71 @@ def start(planet, saved_state=None):
             hud_lines.append(("ESC para voltar.", (235, 235, 235)))
 
         draw_hud(screen_width, screen_height, hud_font, hud_lines)
+
+        # --- RENDERIZAÇÃO DO MENU DE PAUSA / GAME OVER ---
+        if is_game_over:
+            glMatrixMode(GL_PROJECTION)
+            glPushMatrix()
+            glLoadIdentity()
+            glOrtho(0, screen_width, screen_height, 0, -1, 1)
+            glMatrixMode(GL_MODELVIEW)
+            glPushMatrix()
+            glLoadIdentity()
+            glDisable(GL_DEPTH_TEST)
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+            # Fundo avermelhado de sangue
+            glColor4f(0.5, 0, 0, 0.4)
+            glBegin(GL_QUADS)
+            glVertex2f(0, 0); glVertex2f(screen_width, 0)
+            glVertex2f(screen_width, screen_height); glVertex2f(0, screen_height)
+            glEnd()
+            
+            title_game_over.draw()
+            btn_restart_go.draw()
+            btn_load.draw()
+            btn_menu.draw()
+            btn_exit.draw()
+
+            glEnable(GL_DEPTH_TEST)
+            glMatrixMode(GL_PROJECTION)
+            glPopMatrix()
+            glMatrixMode(GL_MODELVIEW)
+            glPopMatrix()
+
+        elif is_paused:
+            # Overlay 2D para o menu de pausa
+            glMatrixMode(GL_PROJECTION)
+            glPushMatrix()
+            glLoadIdentity()
+            glOrtho(0, screen_width, screen_height, 0, -1, 1)
+            glMatrixMode(GL_MODELVIEW)
+            glPushMatrix()
+            glLoadIdentity()
+            glDisable(GL_DEPTH_TEST)
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+            # Fundo escuro transparente
+            glColor4f(0, 0, 0, 0.6)
+            glBegin(GL_QUADS)
+            glVertex2f(0, 0); glVertex2f(screen_width, 0)
+            glVertex2f(screen_width, screen_height); glVertex2f(0, screen_height)
+            glEnd()
+            
+            title_pause.draw()
+            btn_continue.draw()
+            btn_save.draw()
+            btn_load.draw()
+            btn_menu.draw()
+            btn_exit.draw()
+
+            glEnable(GL_DEPTH_TEST)
+            glMatrixMode(GL_PROJECTION)
+            glPopMatrix()
+            glMatrixMode(GL_MODELVIEW)
+            glPopMatrix()
 
         pygame.display.flip()
         delta_seconds = clock.tick(fps) / 1000.0

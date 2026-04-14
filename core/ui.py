@@ -45,6 +45,7 @@ class Button:
         self.text_color = text_color
         
         self.is_hovered = False
+        self.disabled = False  # Quando True, o botão fica apagado e sem interação
         self.text_texture, self.text_w, self.text_h = self._create_text_texture()
         
         # Garante o load dos sons de UI
@@ -67,6 +68,9 @@ class Button:
         return tex_id, width, height
 
     def check_hover(self, mouse_pos):
+        if self.disabled:
+            self.is_hovered = False
+            return False
         was_hovered = self.is_hovered
         self.is_hovered = self.rect.collidepoint(mouse_pos)
         
@@ -77,6 +81,8 @@ class Button:
         return self.is_hovered
 
     def handle_event(self, event):
+        if self.disabled:
+            return
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.is_hovered:
                 if _click_sound:
@@ -111,7 +117,9 @@ class Button:
         # 2. Desenha o Texto
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, self.text_texture)
-        glColor4f(1.0, 1.0, 1.0, 1.0) # Branco sólido para o texto
+        # Se desabilitado, renderiza com opacidade reduzida (30%)
+        opacity = 0.3 if self.disabled else 1.0
+        glColor4f(1.0, 1.0, 1.0, opacity)
         
         tx = self._calculate_text_x()
         ty = self.rect.y + (self.rect.height - self.text_h) / 2

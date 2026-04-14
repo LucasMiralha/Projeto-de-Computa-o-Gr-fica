@@ -15,7 +15,7 @@ def start(planet, saved_state=None):
         
         # executa a função principal do nível
         # cada nível deve ter uma função 'run' que contém o loop
-        return level_module.start(planet, saved_state=None)
+        return level_module.start(planet, saved_state=saved_state)
         
     except ImportError as e:
         print(f"\nScript de fase não encontrado: {module_path}")
