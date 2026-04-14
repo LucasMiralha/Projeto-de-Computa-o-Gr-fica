@@ -46,6 +46,8 @@ class MazeMonster:
 
     @property
     def position(self):
+        if hasattr(self, 'current_layer'):
+            return (self.current_layer, self.x, self.z)
         return (self.x, self.z)
 
     def get_state(self, items_collected):
@@ -145,15 +147,27 @@ class MazeMonster:
             items_collected >= 5 or result.player_distance <= profile["awareness_radius"]
         )
 
+        # Índices de X e Z no formato de posição: (x, z) vs (layer, x, z)
+        _3d = hasattr(self, 'current_layer')
+        _ix = 1 if _3d else 0  # índice do X
+        _iz = 2 if _3d else 1  # índice do Z
+
         if result.should_chase:
-            player_velocity_x = player_position[0] - previous_player_position[0]
-            player_velocity_z = player_position[1] - previous_player_position[1]
+            player_velocity_x = player_position[_ix] - previous_player_position[_ix]
+            player_velocity_z = player_position[_iz] - previous_player_position[_iz]
             velocity_length = math.hypot(player_velocity_x, player_velocity_z)
             predictive_scale = min(self.block_size * 1.25, velocity_length * 10.0)
-            predicted_target = (
-                player_position[0] + (player_velocity_x * predictive_scale),
-                player_position[1] + (player_velocity_z * predictive_scale),
-            )
+            if _3d:
+                predicted_target = (
+                    player_position[0],
+                    player_position[_ix] + (player_velocity_x * predictive_scale),
+                    player_position[_iz] + (player_velocity_z * predictive_scale),
+                )
+            else:
+                predicted_target = (
+                    player_position[_ix] + (player_velocity_x * predictive_scale),
+                    player_position[_iz] + (player_velocity_z * predictive_scale),
+                )
             if items_collected >= 4:
                 self.target_position = self.cutoff_target_fn(
                     level_map,
@@ -179,9 +193,12 @@ class MazeMonster:
                 self.target_position = player_position
             self.next_path_refresh = now + profile["path_refresh_ms"]
 
-        target_x, target_z = self.target_position
+        target_x = self.target_position[_ix]
+        target_z = self.target_position[_iz]
         if len(self.path) > 1:
-            next_row, next_col = self.path[1]
+            path_entry = self.path[1]
+            # Suporte a path 2D (row, col) e 3D (layer, row, col)
+            next_row, next_col = path_entry[-2], path_entry[-1]
             target_x, target_z = self.cell_to_world_fn(next_row, next_col)
 
         delta_x = target_x - self.x

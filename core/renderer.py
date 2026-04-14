@@ -689,7 +689,68 @@ def draw_creature(x, y, z, yaw_degrees, body_color, glow_color, pulse_time):
 
     glPopMatrix()
 
-def draw_collectible(x, y, z, size, body_color, glow_color, pulse_time):
+def draw_collectible(x, y, z, size, body_color=None, glow_color=None, pulse_time=None,
+                     rotation_angle=0.0, hover_offset=0.0, color=None):
+    # Modo Cyber: chamado com keyword args (rotation_angle, hover_offset, color)
+    if color is not None:
+        half = size / 2.0
+        item_y = y + hover_offset
+
+        glPushMatrix()
+        glTranslatef(x, item_y, z)
+        glRotatef(rotation_angle, 0, 1, 0)
+
+        glDisable(GL_TEXTURE_2D)
+        glColor3f(*color)
+
+        # Corpo principal do item (diamante)
+        glBegin(GL_TRIANGLES)
+        # Pirâmide superior
+        glVertex3f(0, half * 1.2, 0)
+        glVertex3f(-half, 0, -half)
+        glVertex3f(half, 0, -half)
+
+        glVertex3f(0, half * 1.2, 0)
+        glVertex3f(half, 0, -half)
+        glVertex3f(half, 0, half)
+
+        glVertex3f(0, half * 1.2, 0)
+        glVertex3f(half, 0, half)
+        glVertex3f(-half, 0, half)
+
+        glVertex3f(0, half * 1.2, 0)
+        glVertex3f(-half, 0, half)
+        glVertex3f(-half, 0, -half)
+
+        # Pirâmide inferior (invertida)
+        glVertex3f(0, -half * 0.6, 0)
+        glVertex3f(half, 0, -half)
+        glVertex3f(-half, 0, -half)
+
+        glVertex3f(0, -half * 0.6, 0)
+        glVertex3f(-half, 0, -half)
+        glVertex3f(-half, 0, half)
+
+        glVertex3f(0, -half * 0.6, 0)
+        glVertex3f(-half, 0, half)
+        glVertex3f(half, 0, half)
+
+        glVertex3f(0, -half * 0.6, 0)
+        glVertex3f(half, 0, half)
+        glVertex3f(half, 0, -half)
+        glEnd()
+
+        glPopMatrix()
+        return
+
+    # Modo Arago: chamado com body_color, glow_color, pulse_time
+    if body_color is None:
+        body_color = (0.18, 0.18, 0.20)
+    if glow_color is None:
+        glow_color = (0.90, 0.90, 0.60)
+    if pulse_time is None:
+        pulse_time = 0
+
     pulse_scale = 0.82 + ((math.sin(pulse_time * 0.007) + 1.0) * 0.10)
     bob = math.sin(pulse_time * 0.005) * 0.18
     draw_cube(x, y + 0.5 + bob, z, size * 0.55, 1.25, color=body_color)

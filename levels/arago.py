@@ -5,6 +5,8 @@ import sys
 from array import array
 from collections import deque
 
+import numpy as np
+
 import pygame
 from OpenGL.GL import *
 from OpenGL.GLU import *
@@ -136,29 +138,119 @@ def draw_hud(width, height, font, lines):
     glDeleteTextures([texture_id])
 
 
+# --- Cache global para a máscara base da lanterna (calculada uma vez) ---
+_flashlight_cache = {
+    "base_light": None,     # Máscara de iluminação base (float32, shape sh×sw)
+    "vignette": None,       # Máscara de vinheta (float32, shape sh×sw)
+    "sw": 0,
+    "sh": 0,
+    "texture_id": None,     # Textura OpenGL reutilizável
+}
+
+
+def _build_flashlight_base(sw, sh):
+    """Pré-calcula a máscara de iluminação radial e a vinheta.
+    Executado apenas uma vez (ou quando a resolução muda)."""
+    cx = sw / 2.0
+    cy = sh * 0.52
+
+    # Raios base da elipse da lanterna
+    base_radius = min(sw, sh) * 0.32
+    rx = base_radius * 1.25
+    ry = base_radius * 1.0
+    hotspot = 0.38
+
+    # Coordenadas normalizadas de cada pixel
+    xs = np.arange(sw, dtype=np.float32)
+    ys = np.arange(sh, dtype=np.float32)
+    px, py = np.meshgrid(xs, ys)  # shape (sh, sw)
+
+    # Distância elíptica normalizada do centro
+    dx = (px - cx) / max(1.0, rx)
+    dy = (py - cy) / max(1.0, ry)
+    dist = np.sqrt(dx * dx + dy * dy)
+
+    # Calcula o mapa de luz em 3 zonas: hotspot, penumbra, escuridão
+    light = np.zeros_like(dist)
+
+    # Zona 1: Hotspot central brilhante
+    mask_hot = dist < hotspot
+    t_hot = dist[mask_hot] / hotspot
+    light[mask_hot] = 1.0 - (t_hot * t_hot * 0.3)
+
+    # Zona 2: Penumbra — falloff cúbico suave
+    mask_pen = (dist >= hotspot) & (dist < 1.0)
+    t_pen = (dist[mask_pen] - hotspot) / (1.0 - hotspot)
+    light[mask_pen] = 0.7 * (1.0 - (t_pen * t_pen * t_pen))
+
+    # Vinheta nos cantos
+    corner_dx = (px - sw * 0.5) / (sw * 0.5)
+    corner_dy = (py - sh * 0.5) / (sh * 0.5)
+    vignette = np.clip((corner_dx * corner_dx + corner_dy * corner_dy) * 0.15, 0.0, 1.0)
+
+    return light.astype(np.float32), vignette.astype(np.float32)
+
+
 def draw_flashlight_overlay(width, height, pulse_time):
-    overlay = pygame.Surface((width, height), pygame.SRCALPHA)
-    center_x = width // 2
-    center_y = int(height * 0.54)
-    outer_radius = max(95, min(width, height) // 8)
-    beam_offset = int(math.sin(pulse_time * 0.0018) * 4)
+    """Renderiza um overlay de lanterna realista com gradiente suave,
+    elipse, hotspot, penumbra, vinheta e flicker."""
+    global _flashlight_cache
 
-    pygame.draw.rect(overlay, (0, 0, 0, 210), (0, 0, width, height))
+    # Resolução reduzida (1/4) — upscale suave via GL_LINEAR
+    scale = 4
+    sw = max(1, width // scale)
+    sh = max(1, height // scale)
 
-    flashlight_center = (center_x, center_y + beam_offset)
-    for step in range(12, 0, -1):
-        radius = int(outer_radius * (step / 12.0))
-        alpha = int(3 + (step * 2))
-        pygame.draw.circle(
-            overlay,
-            (255, 244, 220, alpha),
-            flashlight_center,
-            radius,
-        )
+    # Reconstrói o cache se a resolução mudou
+    if _flashlight_cache["sw"] != sw or _flashlight_cache["sh"] != sh:
+        _flashlight_cache["base_light"], _flashlight_cache["vignette"] = _build_flashlight_base(sw, sh)
+        _flashlight_cache["sw"] = sw
+        _flashlight_cache["sh"] = sh
+        # Libera a textura antiga se existir
+        if _flashlight_cache["texture_id"] is not None:
+            try:
+                glDeleteTextures([_flashlight_cache["texture_id"]])
+            except Exception:
+                pass
+        _flashlight_cache["texture_id"] = glGenTextures(1)
 
-    overlay_data = pygame.image.tostring(overlay, "RGBA", True)
-    texture_id = glGenTextures(1)
+    base_light = _flashlight_cache["base_light"]  # (sh, sw)
+    vignette = _flashlight_cache["vignette"]       # (sh, sw)
+    texture_id = _flashlight_cache["texture_id"]
 
+    # --- Modulação por frame: breath + flicker ---
+    breath = 1.0 + math.sin(pulse_time * 0.0012) * 0.035
+    flicker = 1.0 - random.uniform(0.0, 0.03)
+    intensity = breath * flicker
+
+    # Escala a luz pelo fator de intensidade (operação vetorial rápida)
+    light = np.clip(base_light * intensity, 0.0, 1.0)
+
+    # Escuridão base
+    max_dark = 235.0
+
+    # Alpha: quanto mais luz, mais transparente (menor alpha)
+    alpha = (max_dark * (1.0 - light) + max_dark * vignette * 0.3)
+    alpha = np.clip(alpha, 0, 255).astype(np.uint8)
+
+    # Canal de cor quente no centro do feixe
+    warmth = light * 0.5
+    r = np.clip(12 + warmth * 30, 0, 255).astype(np.uint8)
+    g = np.clip(8 + warmth * 18, 0, 255).astype(np.uint8)
+    b = np.clip(5 + warmth * 5, 0, 255).astype(np.uint8)
+
+    # Pixels escuros onde não há luz
+    dark_mask = light <= 0.01
+    r[dark_mask] = 0
+    g[dark_mask] = 0
+    b[dark_mask] = 0
+
+    # Monta buffer RGBA (sh, sw, 4) — flip vertical para OpenGL (origem bottom-left)
+    rgba = np.stack([r, g, b, alpha], axis=-1)
+    rgba = np.ascontiguousarray(np.flipud(rgba))
+    overlay_data = rgba.tobytes()
+
+    # --- Upload e renderização via OpenGL ---
     glMatrixMode(GL_PROJECTION)
     glPushMatrix()
     glLoadIdentity()
@@ -175,7 +267,7 @@ def draw_flashlight_overlay(width, height, pulse_time):
     glBindTexture(GL_TEXTURE_2D, texture_id)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, overlay_data)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, sw, sh, 0, GL_RGBA, GL_UNSIGNED_BYTE, overlay_data)
     glColor4f(1.0, 1.0, 1.0, 1.0)
 
     glBegin(GL_QUADS)
@@ -193,8 +285,6 @@ def draw_flashlight_overlay(width, height, pulse_time):
     glPopMatrix()
     glMatrixMode(GL_MODELVIEW)
     glPopMatrix()
-
-    glDeleteTextures([texture_id])
 
 
 def create_tone_sound(frequencies, duration_ms, volume=0.35, sample_rate=22050):
