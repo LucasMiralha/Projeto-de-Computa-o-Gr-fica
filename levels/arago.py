@@ -658,6 +658,7 @@ def start(planet, saved_state=None):
     _font_btn_color = (95, 198, 139, 255)
     _hover_btn_color = (95, 198, 139, 150)
     is_paused = False
+    is_game_over = False
 
     title_pause = Title(
         screen_width // 2 - 300, screen_height // 2 - 200, 600, 100,
@@ -733,6 +734,22 @@ def start(planet, saved_state=None):
         fonte_botao, cb_sair_desktop, base_color=_btn_color,
         hover_color=_hover_btn_color, text_color=_font_btn_color
     )
+    
+    def cb_restart_level():
+        nonlocal running, result_state
+        result_state = "RESTART"
+        running = False
+        
+    title_game_over = Title(
+        screen_width // 2 - 300, screen_height // 2 - 200, 600, 100,
+        "VOCÊ MORREU", fonte_titulo, bg_color=(0, 0, 0, 0),
+        text_color=(255, 50, 50, 255), align="center"
+    )
+    btn_restart_go = Button(
+        screen_width // 2 - 150, screen_height // 2 - 100, 300, 50, "TENTAR DE NOVO",
+        fonte_botao, cb_restart_level, base_color=_btn_color,
+        hover_color=_hover_btn_color, text_color=_font_btn_color
+    )
 
     running = True
     esc_held = False
@@ -751,11 +768,17 @@ def start(planet, saved_state=None):
         creature_state = creature_profile["state"]
 
         keys_raw = pygame.key.get_pressed()
-        if (keys_raw[K_ESCAPE] or keys_raw[K_p]) and not esc_held:
-            esc_held = True
-            running = False
-        elif not (keys_raw[K_ESCAPE] or keys_raw[K_p]):
-            esc_held = False
+        if not is_game_over:
+            if (keys_raw[K_ESCAPE] or keys_raw[K_p]) and not esc_held:
+                esc_held = True
+                if is_paused:
+                    cb_continuar()
+                else:
+                    is_paused = True
+                    pygame.mouse.set_visible(True)
+                    pygame.event.set_grab(False)
+            elif not (keys_raw[K_ESCAPE] or keys_raw[K_p]):
+                esc_held = False
 
         for event in pygame.event.get():
             if event.type == QUIT:
@@ -763,8 +786,12 @@ def start(planet, saved_state=None):
                 sys.exit()
 
             # Menu de pausa: captura eventos de UI
-            if is_paused:
-                mouse_pos = pygame.mouse.get_pos()
+            if is_game_over:
+                btn_restart_go.handle_event(event)
+                btn_load.handle_event(event)
+                btn_menu.handle_event(event)
+                btn_exit.handle_event(event)
+            elif is_paused:
                 btn_continue.handle_event(event)
                 btn_save.handle_event(event)
                 btn_load.handle_event(event)
@@ -803,7 +830,13 @@ def start(planet, saved_state=None):
                         status_message = "Nenhum item ou saida ao alcance."
 
         # Atualiza hover dos botões de pausa
-        if is_paused:
+        if is_game_over:
+            mouse_pos = pygame.mouse.get_pos()
+            btn_restart_go.check_hover(mouse_pos)
+            btn_load.check_hover(mouse_pos)
+            btn_menu.check_hover(mouse_pos)
+            btn_exit.check_hover(mouse_pos)
+        elif is_paused:
             mouse_pos = pygame.mouse.get_pos()
             btn_continue.check_hover(mouse_pos)
             btn_save.check_hover(mouse_pos)
@@ -811,7 +844,7 @@ def start(planet, saved_state=None):
             btn_menu.check_hover(mouse_pos)
             btn_exit.check_hover(mouse_pos)
 
-        if is_paused:
+        if is_paused or is_game_over:
             # Pula a lógica de jogo, vai direto pra renderização
             pass
         else:
@@ -949,12 +982,17 @@ def start(planet, saved_state=None):
                     creature_yaw = math.degrees(math.atan2(delta_x, -delta_z))
 
                 if should_chase_player and player_distance <= 1.2:
-                    status_message = "A criatura alcancou voce."
-                    if sound_enabled and "defeat" in sounds:
-                        sounds["defeat"].play()
-                        pygame.time.delay(700)
-                    result_state = "DERROTA"
-                    running = False
+                    if not is_game_over:
+                        status_message = "A criatura alcancou voce."
+                        try:
+                            pygame.mixer.Sound(_os.path.join(_script_path, 'Assets', 'Sounds', 'ai-01.mp3')).play()
+                        except Exception as e:
+                            print(f"Erro no som principal: {e}")
+                            if sound_enabled and "defeat" in sounds:
+                                sounds["defeat"].play() # Fallback pro som original do sistema se falhar
+                        is_game_over = True
+                        pygame.mouse.set_visible(True)
+                        pygame.event.set_grab(False)
             elif items_collected > 0 and creature_spawn and creature_visible and now < creature_wake_time:
                 status_message = "Voce ouviu algo se movendo pelos corredores."
 
@@ -1062,8 +1100,39 @@ def start(planet, saved_state=None):
 
         draw_hud(screen_width, screen_height, hud_font, hud_lines)
 
-        # --- RENDERIZAÇÃO DO MENU DE PAUSA ---
-        if is_paused:
+        # --- RENDERIZAÇÃO DO MENU DE PAUSA / GAME OVER ---
+        if is_game_over:
+            glMatrixMode(GL_PROJECTION)
+            glPushMatrix()
+            glLoadIdentity()
+            glOrtho(0, screen_width, screen_height, 0, -1, 1)
+            glMatrixMode(GL_MODELVIEW)
+            glPushMatrix()
+            glLoadIdentity()
+            glDisable(GL_DEPTH_TEST)
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+            # Fundo avermelhado de sangue
+            glColor4f(0.5, 0, 0, 0.4)
+            glBegin(GL_QUADS)
+            glVertex2f(0, 0); glVertex2f(screen_width, 0)
+            glVertex2f(screen_width, screen_height); glVertex2f(0, screen_height)
+            glEnd()
+            
+            title_game_over.draw()
+            btn_restart_go.draw()
+            btn_load.draw()
+            btn_menu.draw()
+            btn_exit.draw()
+
+            glEnable(GL_DEPTH_TEST)
+            glMatrixMode(GL_PROJECTION)
+            glPopMatrix()
+            glMatrixMode(GL_MODELVIEW)
+            glPopMatrix()
+
+        elif is_paused:
             # Overlay 2D para o menu de pausa
             glMatrixMode(GL_PROJECTION)
             glPushMatrix()

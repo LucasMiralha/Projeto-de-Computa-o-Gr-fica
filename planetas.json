@@ -160,9 +160,9 @@
       "level_name": "kg_348",
       "layout": [
         [
-          "PPPPPPPPPPPPPPPPPPPPPPPPPPPP",
+          "PPPPPPPPPPPPPPPPPPPPPPPPFPPPP",
           "P.......PPP.......PPP.......P",
-          "P...M....D....M....D....M...P",
+          "P...M....D....B....D....M...P",
           "P.......PPP.......PPP.......P",
           "PPPP.PPPPPPPPP.PPPPPPPPP.PPPP",
           "PPPPDPPPPPPPPPDPPPPPPPPPDPPPP",
@@ -172,9 +172,9 @@
           "PPPPDPPPPPPPPPDPPPPPPPPPDPPPP",
           "PPPP.PPPPPPPPP.PPPPPPPPP.PPPP",
           "P.......PPP.......PPP.......P",
-          "P...M....D....M....D....M...P",
+          "P...B....D....B....D....M...P",
           "P.......PPP.......PPP.......P",
-          "PPPPPPPPPPPPPPPPPPPPPPPPPPPP"
+          "PPPPPPPPPPPPPPPPPPPPPPPPPPPPP"
         ]
       ]
     },
