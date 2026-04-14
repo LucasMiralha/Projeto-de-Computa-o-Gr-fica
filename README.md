@@ -12,7 +12,7 @@ Este repositório contém o código do jogo Lethal Ceti. O foco do projeto é a 
 * Save: Pasta destinada ao armazenamento local do progresso do jogador.
 
 ## Requisitos Prévios
-Para rodar o projeto, é necessário ter a linguagem Python configurada em sua máquina. Como o desenvolvimento explora programação gráfica, é recomendado instalar as bibliotecas fundamentais para o funcionamento do motor visual, como Pygame e PyOpenGL.
+Para rodar o projeto, é necessário ter a linguagem Python configurada em sua máquina. Como o desenvolvimento explora programação gráfica, é recomendado instalar as bibliotecas fundamentais para o funcionamento do motor visual, como Pygame e PyOpenGL .
 
 ## Instruções de Execução
 Abra o terminal em seu computador e navegue até a pasta raiz do repositório. Inicie o jogo executando o script principal através do comando abaixo:
