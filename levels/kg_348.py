@@ -149,6 +149,9 @@ def start(planet, saved_state=None):
     # --- UI DO PAUSE ---
     pygame.font.init()
     script_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    from core.graphics_utils import load_texture
+    wall_texture_id = load_texture(os.path.join(script_path, 'Assets', 'Textures', 'sewer wall.png'))
+    floor_texture_id = load_texture(os.path.join(script_path, 'Assets', 'Textures', 'sewer floor.png'))
     font_path = os.path.join(script_path, 'Assets', 'Fonts', 'united-sans-reg-bold.otf')
     fonte_botao = pygame.font.Font(font_path, 28)
     fonte_titulo = pygame.font.SysFont('Arial', 72, bold=True)
@@ -477,9 +480,13 @@ def start(planet, saved_state=None):
                     ai_last_path_time = current_time
 
                 # Move
-                if len(ai_path) > 1:
-                    target_row, target_col = ai_path[1]
-                    target_x, target_z = ai_module.cell_to_world(target_row, target_col)
+                if len(ai_path) > 0:
+                    if len(ai_path) == 1:
+                        target_x, target_z = cam_x, cam_z
+                    else:
+                        target_row, target_col = ai_path[1]
+                        target_x, target_z = ai_module.cell_to_world(target_row, target_col)
+                        
                     dx = target_x - ai_pos_x
                     dz = target_z - ai_pos_z
                     dist = math.hypot(dx, dz)
@@ -490,11 +497,11 @@ def start(planet, saved_state=None):
                         move_dist = min(dist, move_spd)
                         ai_pos_x += (dx / dist) * move_dist
                         ai_pos_z += (dz / dist) * move_dist
-                        if dist < move_spd:
+                        if len(ai_path) > 1 and dist < move_spd:
                             ai_path.pop(0)
 
                 # Game Over Check
-                if math.hypot(cam_x - ai_pos_x, cam_z - ai_pos_z) < 1.0:
+                if math.hypot(cam_x - ai_pos_x, cam_z - ai_pos_z) < 1.3:
                     if not dev_mode and not is_game_over:
                         print("- VOCE FOI PEGO PELO PERSEGUIDOR -")
                         try:
@@ -528,7 +535,7 @@ def start(planet, saved_state=None):
                     
                     if char in ('P', 'D', 'F'):
                         if char == 'P':
-                            draw_cube(block_x, block_y, block_z, BLOCK_SIZE, WALL_HEIGHT, color=(0.2, 0.4, 0.6))
+                            draw_cube(block_x, block_y, block_z, BLOCK_SIZE, WALL_HEIGHT, color=(0.2, 0.4, 0.6), texture_id=wall_texture_id)
                         elif char == 'F':
                             if fixed_computers >= 3:
                                 draw_door(block_x, block_y, block_z, 4.0, 4.0, color=(0.2, 0.8, 0.2)) # Porta Livre
@@ -538,7 +545,7 @@ def start(planet, saved_state=None):
                             pass
                     
                     if char != 'P':
-                        draw_floor_tile(block_x, block_y, block_z, BLOCK_SIZE, color=(0.1, 0.2, 0.3))
+                        draw_floor_tile(block_x, block_y, block_z, BLOCK_SIZE, color=(0.1, 0.2, 0.3), texture_id=floor_texture_id)
         
         for comp in computers_data:
             c_color = (0.8, 0.8, 0.1) if comp.get('is_broken', False) else (0.8, 0.1, 0.1)
