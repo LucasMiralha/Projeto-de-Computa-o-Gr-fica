@@ -13,7 +13,11 @@ from OpenGL.GLU import *
 from pygame.locals import *
 
 from core.graphics_utils import load_texture
-from core.renderer import draw_cube, draw_floor_tile, draw_u_stairs, draw_computer, draw_alien_crystal, draw_exit_module, draw_creature, draw_textured_cube, draw_textured_floor_tile
+from core.renderer import (draw_cube, draw_floor_tile, draw_u_stairs, draw_computer, 
+                           draw_alien_crystal, draw_exit_module, draw_creature, 
+                           draw_textured_cube, draw_textured_floor_tile, 
+                           draw_stamina_bar, draw_hud_objective, 
+                           draw_hud_timed_message, draw_hud_interaction_prompt)
 from core.physics_engine import (BLOCK_SIZE, WALL_HEIGHT, is_wall, 
                                  has_ramp_below, get_target_y)
 from core.ui import Button, Title
@@ -779,18 +783,12 @@ def start(planet, saved_state=None):
     pitch = 0.0
 
     mouse_sensitivity = 0.15
-    move_speed = 0.15
+    base_move_speed = 0.15
     player_radius = 0.5
-    sprint_multiplier = 1.8
-    max_stamina = 100.0
-    stamina = max_stamina
-    stamina_drain_per_second = 26.0
-    stamina_recover_per_second = 18.0
-    min_stamina_to_sprint = 10.0
-    sprint_recover_threshold = 35.0
-    stamina_recovery_delay = 1.4
-    exhausted = False
-    stamina_recovery_timer = 0.0
+    sprint_speed = 0.28
+    stamina_max = 100.0
+    stamina = stamina_max
+    stamina_exhausted = False
     sprinting = False
 
     item_candidate_positions = []
@@ -850,6 +848,30 @@ def start(planet, saved_state=None):
     delta_seconds = 1.0 / fps
     previous_player_position = (cam_x, cam_z)
 
+    # --- Sistema de mensagens temporárias com fade-out ---
+    timed_message_text = "Objetivo atual: Coletar 7 componentes"
+    timed_message_color = (255, 215, 120)
+    timed_message_start = pygame.time.get_ticks()
+    timed_message_duration = 4.0  # segundos visível
+    timed_message_fade = 1.5     # segundos de fade-out
+    last_aggression_level = 0    # tracker para disparar mensagens de agressividade
+
+    # Mensagens de agressividade da criatura (personalizáveis, níveis 1-6)
+    CREATURE_AGGRESSION_MESSAGES = {
+        1: "Você ouve algo se movendo pelos corredores...",
+        2: "Um ruido metálico ecoa pelas paredes...",
+        3: "Os passos estão mais próximos agora...",
+        4: "O chão treme sob seus pés...",
+        5: "Você sente uma presença atrás de você...",
+        6: "O som de metal rangendo está ficando mais alto!",
+    }
+
+    def set_timed_message(text, color=(255, 215, 120)):
+        nonlocal timed_message_text, timed_message_color, timed_message_start
+        timed_message_text = text
+        timed_message_color = color
+        timed_message_start = pygame.time.get_ticks()
+
     def stop_level_audio():
         nonlocal current_footstep_name, current_heart_name, pending_wake_sound_time
         nonlocal robot_chase_active
@@ -867,8 +889,8 @@ def start(planet, saved_state=None):
         cam_z = saved_state.get('cam_z', cam_z)
         yaw = saved_state.get('yaw', yaw)
         pitch = saved_state.get('pitch', pitch)
-        stamina = saved_state.get('stamina', max_stamina)
-        exhausted = saved_state.get('exhausted', False)
+        stamina = saved_state.get('stamina', stamina_max)
+        stamina_exhausted = saved_state.get('stamina_exhausted', False)
         items_collected = saved_state.get('items_collected', 0)
         # Restaura itens coletados como set de tuplas
         collected_list = saved_state.get('collected_items', [])
@@ -920,7 +942,7 @@ def start(planet, saved_state=None):
             'yaw': yaw,
             'pitch': pitch,
             'stamina': stamina,
-            'exhausted': exhausted,
+            'stamina_exhausted': stamina_exhausted,
             'items_collected': items_collected,
             'collected_items': [list(pos) for pos in collected_items],
             'item_positions': [list(pos) for pos in item_positions],
@@ -1145,9 +1167,16 @@ def start(planet, saved_state=None):
                         remaining_count = TOTAL_ARAGO_ITEMS - items_collected
                         if remaining_count > 0:
                             status_message = f"Item coletado. Faltam {remaining_count} para liberar a saida."
+                            # Dispara mensagem de agressividade se nível mudou
+                            if items_collected != last_aggression_level and items_collected in CREATURE_AGGRESSION_MESSAGES:
+                                set_timed_message(CREATURE_AGGRESSION_MESSAGES[items_collected], (255, 170, 90))
+                                last_aggression_level = items_collected
                         else:
                             status_message = "Todos os 7 itens foram coletados. A saida foi liberada."
                             play_sound(sound_enabled, sounds, "unlock")
+                            set_timed_message("Ache a saida antes que seja tarde!", (140, 235, 160))
+                            # Última mensagem de agressividade (nível 7 = furioso, usa 6)
+                            last_aggression_level = items_collected
                     elif near_exit:
                         if exit_unlocked:
                             if not is_victory:
@@ -1200,28 +1229,20 @@ def start(planet, saved_state=None):
             right_x = math.cos(yaw_rad)
             right_z = math.sin(yaw_rad)
             is_moving = keys[K_w] or keys[K_s] or keys[K_a] or keys[K_d]
-            wants_to_sprint = keys[K_LSHIFT] or keys[K_RSHIFT]
 
-            if exhausted and stamina >= sprint_recover_threshold:
-                exhausted = False
-
-            can_start_sprint = wants_to_sprint and is_moving and not exhausted and stamina > min_stamina_to_sprint
-            can_continue_sprint = wants_to_sprint and is_moving and not exhausted and sprinting and stamina > 0.0
-            can_sprint = can_continue_sprint or can_start_sprint
-            sprinting = can_sprint
-            current_move_speed = move_speed * sprint_multiplier if can_sprint else move_speed
-
-            if can_sprint:
-                stamina = max(0.0, stamina - (stamina_drain_per_second * delta_seconds))
-                if stamina <= 0.0:
-                    exhausted = True
-                    stamina_recovery_timer = stamina_recovery_delay
-                    sprinting = False
+            # Stamina: mesma lógica de tau_ceti_iv
+            if stamina <= 0:
+                stamina_exhausted = True
+            if stamina_exhausted and stamina >= 50:
+                stamina_exhausted = False
+            if (keys[K_LSHIFT] or keys[K_RSHIFT]) and stamina > 0 and not stamina_exhausted:
+                current_move_speed = sprint_speed
+                stamina = max(0.0, stamina - 0.6)
+                sprinting = True
             else:
-                if stamina_recovery_timer > 0.0:
-                    stamina_recovery_timer = max(0.0, stamina_recovery_timer - delta_seconds)
-                else:
-                    stamina = min(max_stamina, stamina + (stamina_recover_per_second * delta_seconds))
+                current_move_speed = base_move_speed
+                stamina = min(stamina_max, stamina + 0.15)
+                sprinting = False
 
             previous_cam_x = cam_x
             previous_cam_z = cam_z
@@ -1447,48 +1468,31 @@ def start(planet, saved_state=None):
 
         interaction_prompt = get_interaction_prompt(near_item_position is not None, near_exit, items_collected, exit_unlocked)
 
-        hud_lines = [(f"Planeta: {planet.name}", (235, 235, 235))]
-
-        if planet.name == "Arago":
-            current_objective = "Coletar os 7 itens" if not exit_unlocked else "Alcancar a saida"
-            hud_lines.append((f"Objetivo atual: {current_objective}", (255, 215, 120)))
-            hud_lines.append((f"Itens coletados: {items_collected}/{TOTAL_ARAGO_ITEMS}", get_collect_progress_color(items_collected)))
-            hud_lines.append((format_mission_status_line("Saida", exit_unlocked), get_status_color(exit_unlocked)))
-            stamina_color = (255, 95, 95) if exhausted else get_status_color(stamina > 35.0)
-            hud_lines.append((f"Estamina: {int(stamina)}/{int(max_stamina)}", stamina_color))
-            hud_lines.append(("Shift para correr", (190, 220, 255)))
-            if stamina_recovery_timer > 0.0:
-                hud_lines.append(("Exausto: recuperando folego...", (255, 95, 95)))
-            elif exhausted:
-                hud_lines.append(("Exausto: espere a estamina recarregar.", (255, 95, 95)))
-            if items_collected <= 0:
-                creature_line = "Criatura: adormecida"
-                creature_color = (180, 180, 180)
-            elif creature_visible and now < creature_wake_time:
-                creature_line = f"Criatura: {creature_state} (despertando)"
-                creature_color = (255, 185, 120)
-            elif creature_visible:
-                creature_line = f"Criatura: {creature_state}"
-                creature_color = (255, 140, 140)
-            else:
-                creature_line = f"Criatura: {creature_state}"
-                creature_color = (200, 180, 180)
-            hud_lines.append((creature_line, creature_color))
-            hud_lines.append((f"Agressividade: nivel {min(items_collected + 1, TOTAL_ARAGO_ITEMS)}", (255, 170, 90)))
-            hud_lines.append((status_message, (240, 240, 240)))
-
-            if interaction_prompt:
-                hud_lines.append((interaction_prompt, (255, 205, 120)))
-            else:
-                if not exit_unlocked:
-                    hud_lines.append(("Explore os corredores e encontre os itens restantes.", (255, 205, 120)))
-                else:
-                    hud_lines.append(("Corra para o modulo verde de saida.", (140, 235, 160)))
-        else:
-            hud_lines.append(("ESC para voltar.", (235, 235, 235)))
-
         draw_flashlight_overlay(screen_width, screen_height, pulse_time)
-        draw_hud(screen_width, screen_height, hud_font, hud_lines)
+
+        # --- HUD: Itens coletados (canto superior esquerdo, sem painel) ---
+        if planet.name == "Arago":
+            draw_hud_objective(f"Itens coletados: {items_collected}/{TOTAL_ARAGO_ITEMS}", screen_width, screen_height, hud_font, get_collect_progress_color(items_collected))
+        else:
+            draw_hud_objective("ESC para voltar.", screen_width, screen_height, hud_font, (235, 235, 235))
+
+        # --- Barra de stamina (canto inferior esquerdo) ---
+        draw_stamina_bar(stamina, stamina_max, screen_width, screen_height, stamina_exhausted)
+
+        # --- Mensagens temporárias com fade-out (2/3 acima do centro) ---
+        if timed_message_text and timed_message_start > 0:
+            elapsed = (now - timed_message_start) / 1000.0
+            if elapsed < timed_message_duration + timed_message_fade:
+                if elapsed < timed_message_duration:
+                    alpha = 1.0
+                else:
+                    fade_elapsed = elapsed - timed_message_duration
+                    alpha = max(0.0, 1.0 - (fade_elapsed / timed_message_fade))
+                draw_hud_timed_message(timed_message_text, screen_width, screen_height, hud_font, alpha, timed_message_color)
+
+        # --- Prompt de interação (2/3 abaixo do centro) ---
+        if interaction_prompt and not is_paused and not is_game_over and not is_victory:
+            draw_hud_interaction_prompt(interaction_prompt, screen_width, screen_height, hud_font, (255,238,140))
 
         # --- RENDERIZAÇÃO DO MENU DE PAUSA / GAME OVER ---
         if is_game_over:

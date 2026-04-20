@@ -10,7 +10,10 @@ from OpenGL.GLU import *
 
 
 from core.graphics_utils import load_texture
-from core.renderer import draw_cube, draw_floor_tile, draw_u_stairs, draw_computer, draw_textured_cube, draw_textured_floor_tile
+from core.renderer import (draw_cube, draw_u_stairs, draw_computer, 
+                           draw_textured_cube, draw_textured_floor_tile, 
+                           draw_stamina_bar, draw_hud_objective, 
+                           draw_hud_interaction_prompt, draw_ui_text)
 from core.physics_engine import (BLOCK_SIZE, WALL_HEIGHT, is_wall, 
                                  has_ramp_below, get_target_y)
 from core.ui import Button, Title
@@ -380,7 +383,7 @@ class AlienFSM:
         self.target_wz = 0.0
         
         self.speed = 0.20 
-        self.chasing_speed = 0.18
+        self.chasing_speed = 0.20
         self.target_grid = None
         self.recalc_timer = 0
         self.valid_floors = len(map3d) - 1
@@ -436,8 +439,12 @@ class AlienFSM:
         self.set_target_and_path(comp_wx, comp_wy, comp_wz)
 
     def update(self, player_x, player_y, player_z, collision_map):
-        current_speed = self.chasing_speed if self.state == "CHASING" else self.speed
-        dist_to_player = math.hypot(math.hypot(self.x - player_x, self.z - player_z), (self.y + 2.0) - player_y)
+        if self.state == "HUNTING":
+            current_speed = self.speed * 2.0
+        else:
+            current_speed = self.chasing_speed if self.state == "CHASING" else self.speed
+        
+        dist_to_player = math.hypot(math.hypot(self.x - player_x, self.z - player_z), self.y - player_y)
 
         # Lógica de Transição de Estados
         if self.state == "WANDERING":
@@ -450,11 +457,11 @@ class AlienFSM:
                     rz = r_node[1] * BLOCK_SIZE   
                     self.set_target_and_path(rx, ry, rz)
                 
-            if dist_to_player < 20.0:
+            if dist_to_player < 30.0:
                 self.state = "CHASING"
 
         elif self.state == "HUNTING":
-            if dist_to_player < 20.0: 
+            if dist_to_player < 45.0: 
                 self.state = "CHASING"
             elif not self.path_waypoints: 
                 self.state = "WANDERING"
@@ -551,6 +558,64 @@ def start(planet, saved_state=None):
     # Fontes para HUD e UI do Computador
     hud_font = pygame.font.SysFont("consolas", 24, bold=True)
     comp_font_large = pygame.font.SysFont("consolas", 48, bold=True)
+
+    # --- AUDIO SETUP ---
+    sound_enabled = True
+    sounds = {}
+    ch_ambience = None
+    ch_comp_amb = None
+    ch_alien_steps = None
+    ch_alien_pursuit = None
+    ch_player_steps = None
+    ch_scary = None
+    ch_sfx = None
+
+    try:
+        if not pygame.mixer.get_init():
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+        pygame.mixer.set_num_channels(16)
+        
+        script_path = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(script_path)
+        sounds_dir = os.path.join(project_root, "Assets", "Sounds")
+        sounds["ambience"] = pygame.mixer.Sound(os.path.join(sounds_dir, "tauceti_ambience.mp3"))
+        sounds["comp_accessed"] = pygame.mixer.Sound(os.path.join(sounds_dir, "computer_accessed.mp3"))
+        sounds["comp_error"] = pygame.mixer.Sound(os.path.join(sounds_dir, "computer_error.mp3"))
+        sounds["comp_ambience"] = pygame.mixer.Sound(os.path.join(sounds_dir, "computer_ambience.mp3"))
+        sounds["scary"] = pygame.mixer.Sound(os.path.join(sounds_dir, "scary_sound.mp3"))
+        sounds["alien_steps"] = pygame.mixer.Sound(os.path.join(sounds_dir, "Alien_steps.mp3"))
+        sounds["alien_pursuit"] = pygame.mixer.Sound(os.path.join(sounds_dir, "Alien_pursuit.mp3"))
+        sounds["player_steps"] = pygame.mixer.Sound(os.path.join(sounds_dir, "passos_arago.mp3"))
+        
+        # Volumes base
+        sounds["ambience"].set_volume(0.3)
+        sounds["comp_accessed"].set_volume(0.6)
+        sounds["comp_error"].set_volume(0.6)
+        sounds["scary"].set_volume(0.4)
+        sounds["alien_pursuit"].set_volume(0.5)
+        
+        # Channels
+        ch_ambience = pygame.mixer.Channel(0)
+        ch_comp_amb = pygame.mixer.Channel(1)
+        ch_alien_steps = pygame.mixer.Channel(2)
+        ch_alien_pursuit = pygame.mixer.Channel(3)
+        ch_player_steps = pygame.mixer.Channel(4)
+        ch_scary = pygame.mixer.Channel(5)
+        ch_sfx = pygame.mixer.Channel(6)
+        
+        if ch_ambience:
+            ch_ambience.play(sounds["ambience"], loops=-1)
+            
+    except Exception as e:
+        print(f"Erro ao carregar os sons na fase: {e}")
+        sound_enabled = False
+
+    def stop_level_audio():
+        if sound_enabled:
+            for i in range(7):
+                ch = pygame.mixer.Channel(i)
+                if ch and ch.get_busy():
+                    ch.stop()
 
     clock = pygame.time.Clock()
     FPS = 60
@@ -652,6 +717,14 @@ def start(planet, saved_state=None):
     # --- VARIÁVEIS DE ESTADO DA UI ---
     interacting_comp = None # Computador atualmente aberto
     error_blink_timer = 0   # Timer para piscar a tela de vermelho
+    
+    # --- VARIÁVEIS DE ÁUDIO ---
+    next_scary_sound_time = pygame.time.get_ticks() + random.randint(90000, 360000) # 1:30 a 6 minutos
+    current_pursuit_active = False
+    current_player_steps = False
+    current_alien_steps = False
+    current_comp_ambience = False
+    prev_cam_x, prev_cam_z = spawn_x, spawn_z # inicializa os tracking de steps
                     
     # Verificação de posição inicial: Se tiver save state, aplica as coordenadas dele. Senão, vai no spawn padrao
     if saved_state:
@@ -719,9 +792,11 @@ def start(planet, saved_state=None):
 
     running = True
     is_paused = False
+    is_game_over = False
     is_victory = False
     result_state = "MENU"
     esc_held = False
+    show_alien_debug = False
 
     # UI moved down
 
@@ -773,8 +848,23 @@ def start(planet, saved_state=None):
         running = False
         
     def cb_sair_desktop():
+        stop_level_audio()
         pygame.quit()
         sys.exit()
+
+    def cb_toggle_debug():
+        nonlocal show_alien_debug
+        show_alien_debug = not show_alien_debug
+
+    def cb_restart_level():
+        nonlocal running, result_state
+        result_state = "RESTART"
+        running = False
+
+    def cb_win_continue():
+            nonlocal running, result_state
+            result_state = "WIN_CONTINUE"
+            running = False
 
     btn_continue = Button(
         screen_width // 2 - 200, screen_height // 2 - 120, 450, 50, "CONTINUAR",
@@ -801,16 +891,10 @@ def start(planet, saved_state=None):
         fonte_botao, cb_sair_desktop, base_color=button_color,
         hover_color=hover_button_color, text_color=font_button_color
     )
-
-    def cb_win_continue():
-        nonlocal running, result_state
-        result_state = "WIN_CONTINUE"
-        running = False
-
-    title_victory = Title(
-        screen_width // 2 - 300, screen_height // 2 - 200, 600, 100,
-        "VITÓRIA", fonte_titulo, bg_color=(0, 0, 0, 0),
-        text_color=(50, 255, 50, 255), align="center"
+    btn_toggle_debug = Button(
+        screen_width // 2 - 200, screen_height // 2 + 230, 450, 50, "TOGGLE ALIEN DEBUG",
+        fonte_botao, cb_toggle_debug, base_color=button_color,
+        hover_color=hover_button_color, text_color=font_button_color
     )
     btn_win_continue = Button(
         screen_width // 2 - 200, screen_height // 2 - 50, 450, 50, "CONTINUAR",
@@ -824,6 +908,37 @@ def start(planet, saved_state=None):
     )
     btn_win_exit = Button(
         screen_width // 2 - 200, screen_height // 2 + 90, 450, 50, "SAIR",
+        fonte_botao, cb_sair_desktop, base_color=button_color,
+        hover_color=hover_button_color, text_color=font_button_color
+    )
+    title_victory = Title(
+            screen_width // 2 - 300, screen_height // 2 - 200, 600, 100,
+            "VITÓRIA", fonte_titulo, bg_color=(0, 0, 0, 0),
+            text_color=(50, 255, 50, 255), align="center"
+    )
+
+    title_game_over = Title(
+        screen_width // 2 - 300, screen_height // 2 - 200, 600, 100,
+        "VOCÊ MORREU", fonte_titulo, bg_color=(0, 0, 0, 0),
+        text_color=(255, 50, 50, 255), align="center"
+    )
+    btn_restart_go = Button(
+        screen_width // 2 - 200, screen_height // 2 - 50, 450, 50, "TENTAR DE NOVO",
+        fonte_botao, cb_restart_level, base_color=button_color,
+        hover_color=hover_button_color, text_color=font_button_color
+    )
+    btn_load_go = Button(
+        screen_width // 2 - 200, screen_height // 2 + 20, 450, 50, "CARREGAR JOGO",
+        fonte_botao, cb_carregar_jogo, base_color=button_color,
+        hover_color=hover_button_color, text_color=font_button_color
+    )
+    btn_back_menu_go = Button(
+        screen_width // 2 - 200, screen_height // 2 + 90, 450, 50, "SAIR PARA SELEÇÃO DE PLANETAS",
+        fonte_botao, cb_voltar_menu, base_color=button_color,
+        hover_color=hover_button_color, text_color=font_button_color
+    )
+    btn_exit_desktop_go = Button(
+        screen_width // 2 - 200, screen_height // 2 + 160, 450, 50, "SAIR PARA ÁREA DE TRABALHO",
         fonte_botao, cb_sair_desktop, base_color=button_color,
         hover_color=hover_button_color, text_color=font_button_color
     )
@@ -845,7 +960,7 @@ def start(planet, saved_state=None):
 
         keys_raw = pygame.key.get_pressed()
         
-        if not is_victory:
+        if not is_victory and not is_game_over:
             if keys_raw[K_ESCAPE] and not esc_held:
                 esc_held = True
                 if interacting_comp:
@@ -863,7 +978,12 @@ def start(planet, saved_state=None):
                 esc_held = False
         
         mouse_pos = pygame.mouse.get_pos()
-        if is_victory:
+        if is_game_over:
+            btn_restart_go.check_hover(mouse_pos)
+            btn_load_go.check_hover(mouse_pos)
+            btn_back_menu_go.check_hover(mouse_pos)
+            btn_exit_desktop_go.check_hover(mouse_pos)
+        elif is_victory:
             btn_win_continue.check_hover(mouse_pos)
             btn_win_menu.check_hover(mouse_pos)
             btn_win_exit.check_hover(mouse_pos)
@@ -873,6 +993,7 @@ def start(planet, saved_state=None):
             btn_load_game.check_hover(mouse_pos)
             btn_back_menu.check_hover(mouse_pos)
             btn_exit_desktop.check_hover(mouse_pos)
+            btn_toggle_debug.check_hover(mouse_pos)
 
         # leitor de eventos
         for event in pygame.event.get():
@@ -880,7 +1001,12 @@ def start(planet, saved_state=None):
                 pygame.quit()
                 sys.exit()
                 
-            if is_victory:
+            if is_game_over:
+                btn_restart_go.handle_event(event)
+                btn_load_go.handle_event(event)
+                btn_back_menu_go.handle_event(event)
+                btn_exit_desktop_go.handle_event(event)
+            elif is_victory:
                 btn_win_continue.handle_event(event)
                 btn_win_menu.handle_event(event)
                 btn_win_exit.handle_event(event)
@@ -890,9 +1016,10 @@ def start(planet, saved_state=None):
                 btn_load_game.handle_event(event)
                 btn_back_menu.handle_event(event)
                 btn_exit_desktop.handle_event(event)
+                btn_toggle_debug.handle_event(event)
 
             if event.type == KEYDOWN:
-                if not is_paused and not is_victory and event.key == K_p:
+                if not is_paused and not is_victory and not is_game_over and event.key == K_p:
                     is_victory = True
                     pygame.mouse.set_visible(True)
                     pygame.event.set_grab(False)
@@ -905,12 +1032,14 @@ def start(planet, saved_state=None):
                         # Valida a senha
                         if interacting_comp['current_input'] == interacting_comp['expected'] or interacting_comp['current_input'] == '@':
                             interacting_comp['resolved'] = True
+                            if sound_enabled and ch_sfx: ch_sfx.play(sounds["comp_accessed"])
                             alien_ai.trigger_hunt(interacting_comp['x'], interacting_comp['y'] + 2.0, interacting_comp['z'])
                             interacting_comp = None # Fecha a tela em caso de sucesso
                             pygame.mouse.set_visible(False)
                             pygame.event.set_grab(True)
                         else:
                             # Errou! Pisca a tela de vermelho por 300ms e apaga o input
+                            if sound_enabled and ch_sfx: ch_sfx.play(sounds["comp_error"])
                             error_blink_timer = now + 300
                             interacting_comp['current_input'] = ""
                             alien_ai.trigger_hunt(interacting_comp['x'], interacting_comp['y'] + 2.0, interacting_comp['z'])
@@ -941,8 +1070,9 @@ def start(planet, saved_state=None):
             btn_load_game.check_hover(mouse_pos)
             btn_back_menu.check_hover(mouse_pos)
             btn_exit_desktop.check_hover(mouse_pos)
+            btn_toggle_debug.check_hover(mouse_pos)
 
-        if not is_paused and not interacting_comp:
+        if not is_paused and not interacting_comp and not is_victory and not is_game_over:
             # movimento do mouse na câmera
             mouse_dx, mouse_dy = pygame.mouse.get_rel()
             yaw += mouse_dx * mouse_sensitivity
@@ -1007,13 +1137,93 @@ def start(planet, saved_state=None):
             # a câmera visual persegue a física real suavemente (cálculos ficam divididos da visão)
             cam_y += (player_y - cam_y) * 0.15
 
+            if sound_enabled and not is_victory:
+                # 1. Player Footsteps
+                moved_dist = math.hypot(cam_x - prev_cam_x, cam_z - prev_cam_z)
+                if moved_dist > 0.01:
+                    if not current_player_steps:
+                        if ch_player_steps: ch_player_steps.play(sounds["player_steps"], loops=-1)
+                        current_player_steps = True
+                else:
+                    if current_player_steps:
+                        if ch_player_steps: ch_player_steps.stop()
+                        current_player_steps = False
+                prev_cam_x, prev_cam_z = cam_x, cam_z
+
+                # 2. Computer Ambience
+                min_comp_dist = 9999.0
+                for comp in computers_data:
+                    dist = math.hypot(cam_x - comp['x'], cam_z - comp['z'])
+                    if dist < min_comp_dist:
+                        min_comp_dist = dist
+                
+                if min_comp_dist < 16.0:  # ~4 blocks distance
+                    vol = 1.0 - (min_comp_dist / 16.0)
+                    vol = max(0.0, min(1.0, vol)) * 0.5
+                    if not current_comp_ambience:
+                        if ch_comp_amb: ch_comp_amb.play(sounds["comp_ambience"], loops=-1)
+                        current_comp_ambience = True
+                    if ch_comp_amb: ch_comp_amb.set_volume(vol)
+                else:
+                    if current_comp_ambience:
+                        if ch_comp_amb: ch_comp_amb.stop()
+                        current_comp_ambience = False
+                
+                # 3. Áudio do Alien (Passos e Perseguição)
+                alien_dist = math.hypot(cam_x - alien_ai.x, cam_z - alien_ai.z)
+                
+                # O alien faz barulho de passos se estiver perto E se movendo, independente do estado
+                is_alien_moving = len(alien_ai.path_waypoints) > 0
+                if alien_dist < 24.0 and is_alien_moving:
+                    if not current_alien_steps:
+                        if ch_alien_steps: ch_alien_steps.play(sounds["alien_steps"], loops=-1)
+                        current_alien_steps = True
+                    
+                    # Ajuste de volume pela distância (mais alto quanto mais perto)
+                    vol = 1.0 - (alien_dist / 24.0)
+                    vol = max(0.0, min(1.0, vol)) * 0.6
+                    if ch_alien_steps: ch_alien_steps.set_volume(vol)
+                else:
+                    if current_alien_steps:
+                        if ch_alien_steps: ch_alien_steps.stop()
+                        current_alien_steps = False
+                
+                # Música de perseguição toca apenas no estado CHASING (quando ele vê o jogador)
+                if alien_ai.state == "CHASING":
+                    if not current_pursuit_active:
+                        if ch_alien_pursuit: 
+                            ch_alien_pursuit.play(sounds["alien_pursuit"], loops=-1)
+                            ch_alien_pursuit.set_volume(1.0)
+                        current_pursuit_active = True
+                else:
+                    if current_pursuit_active:
+                        if ch_alien_pursuit: ch_alien_pursuit.fadeout(1000)
+                        current_pursuit_active = False
+
+                # 4. Scary Random Sound
+                if pygame.time.get_ticks() >= next_scary_sound_time:
+                    if ch_scary: ch_scary.play(sounds["scary"])
+                    next_scary_sound_time = pygame.time.get_ticks() + random.randint(120000, 360000)
+
             alien_ai.update(cam_x, player_y, cam_z, collision_map)
 
             # --- GAME OVER: Alien encostou no jogador ---
             dist_alien = math.hypot(cam_x - alien_ai.x, cam_z - alien_ai.z)
             if dist_alien < 2.0 and abs(player_y - alien_ai.y) < 3.0:
-                result_state = "loss"
-                running = False
+                if not is_game_over:
+                    is_game_over = True
+                    pygame.mouse.set_visible(True)
+                    pygame.event.set_grab(False)
+                    # Para o som de perseguição e passos imediatamente
+                    if current_pursuit_active:
+                        if ch_alien_pursuit: ch_alien_pursuit.stop()
+                        current_pursuit_active = False
+                    if current_alien_steps:
+                        if ch_alien_steps: ch_alien_steps.stop()
+                        current_alien_steps = False
+                    if current_player_steps:
+                        if ch_player_steps: ch_player_steps.stop()
+                        current_player_steps = False
 
         # renderização
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -1033,9 +1243,9 @@ def start(planet, saved_state=None):
 
         draw_billboard_alien(alien_ai.x, alien_ai.y - 2.0, alien_ai.z, alien_tex, 4.0, alien_ai.is_flipped, yaw)
 
-        # --- RENDERIZAÇÃO 2D (HUD E UI DO PC) ---
-        prepare_2d(screen_width, screen_height)
-        
+        # --- RENDERIZAÇÃO 2D (HUD) ---
+        # Funções auto-contidas (gerenciam própria projeção)
+
         # 1. HUD: Rastreador de Computadores (Canto Superior Esquerdo)
         computadores_resolvidos = sum(1 for c in computers_data if c['resolved'])
         total_computadores = len(computers_data)
@@ -1045,72 +1255,92 @@ def start(planet, saved_state=None):
                 is_victory = True
                 pygame.mouse.set_visible(True)
                 pygame.event.set_grab(False)
-        
-        hud_surface = hud_font.render(f"Computadores acessados: {computadores_resolvidos}/{total_computadores}", True, (240, 240, 240))
-        hud_data = pygame.image.tostring(hud_surface, "RGBA", True)
-        hud_w, hud_h = hud_surface.get_size()
-        
-        # Cor da stamina: vermelho se exausta, azul claro se normal
-        stamina_color = (255, 80, 80) if stamina_exhausted else (130, 200, 255)
-        stamina_surface = hud_font.render(f"Stamina: {int(player_stamina)}/100", True, stamina_color)
-        stamina_data = pygame.image.tostring(stamina_surface, "RGBA", True)
-        stam_w, stam_h = stamina_surface.get_size()
 
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        if not is_paused and not is_game_over and not is_victory:
+            draw_hud_objective(f"Computadores acessados: {computadores_resolvidos}/{total_computadores}", screen_width, screen_height, hud_font)
 
-        glRasterPos2f(20, 30) # Posição X, Y do texto
-        glDrawPixels(hud_w, hud_h, GL_RGBA, GL_UNSIGNED_BYTE, hud_data)
+        # 2. Barra de stamina (canto inferior esquerdo)
+        draw_stamina_bar(player_stamina, 100.0, screen_width, screen_height, stamina_exhausted)
 
-        glRasterPos2f(20, 60) # Posição da stamina logo abaixo
-        glDrawPixels(stam_w, stam_h, GL_RGBA, GL_UNSIGNED_BYTE, stamina_data)
-
-        # 2. Prompt de Interação (Centro Inferior)
+        # 3. Prompt de Interação (2/3 abaixo do centro)
         if near_comp and not near_comp['resolved'] and not interacting_comp: 
-            prompt_surf = hud_font.render("Aperte [E] para interagir", True, (255, 215, 120))
-            p_w, p_h = prompt_surf.get_size()
-            glRasterPos2f((screen_width - p_w) // 2, screen_height - 100)
-            glDrawPixels(p_w, p_h, GL_RGBA, GL_UNSIGNED_BYTE, pygame.image.tostring(prompt_surf, "RGBA", True))
+            draw_hud_interaction_prompt("Aperte [E] para interagir", screen_width, screen_height, hud_font, (255,238,140))
 
-        # 3. TELA DO COMPUTADOR (Interface Hacker)
+        # 4. Debug do Alien
+        if show_alien_debug:
+            prepare_2d(screen_width, screen_height)
+            current_spd = alien_ai.speed
+            if alien_ai.state == "HUNTING": current_spd = alien_ai.speed * 2.0
+            elif alien_ai.state == "CHASING": current_spd = alien_ai.chasing_speed
+            
+            alien_info = [
+                f"--- ALIEN DEBUG ---",
+                f"Estado: {alien_ai.state}",
+                f"Coords: X={alien_ai.x:.1f}, Y={alien_ai.y:.1f}, Z={alien_ai.z:.1f}",
+                f"Target: X={alien_ai.target_wx:.1f}, Y={alien_ai.target_wy:.1f}, Z={alien_ai.target_wz:.1f}",
+                f"Waypoints Ativos: {len(alien_ai.path_waypoints)}",
+                f"Velocidade Atual: {current_spd:.2f}"
+            ]
+            y_offset = 30
+            for line in alien_info:
+                draw_ui_text(line, screen_width - 20, y_offset, screen_width, screen_height, hud_font, (255, 255, 50), align="right")
+                y_offset += 30
+            prepare_3d()
+
+        # --- RENDERIZAÇÃO 2D: UI DO PC / MENUS ---
+        prepare_2d(screen_width, screen_height)
+        
+        # 3. TELA DO COMPUTADOR
         if interacting_comp:
-            # Dimensões da tela (60% da resolução do monitor)
+            # dimensões da tela (60% da resolução do monitor)
             ui_w = screen_width * 0.6
             ui_h = screen_height * 0.6
             ui_x = (screen_width - ui_w) // 2
             ui_y = (screen_height - ui_h) // 2
 
             glDisable(GL_TEXTURE_2D)
-            # Verifica o timer do piscar em vermelho
+            # verifica o timer do piscar em vermelho
             if now < error_blink_timer:
-                glColor4f(0.8, 0.1, 0.1, 0.95) # Fundo Vermelho de erro
+                glColor4f(0.8, 0.1, 0.1, 0.95) # fundo Vermelho de erro
 
             else:
-                glColor4f(0.05, 0.15, 0.4, 0.95) # Fundo Azul terminal
+                glColor4f(0.05, 0.15, 0.4, 0.95) # fundo Azul terminal
                 
-            # Desenha a placa de fundo
+            # desenha a placa de fundo
             glBegin(GL_QUADS)
             glVertex2f(ui_x, ui_y); glVertex2f(ui_x + ui_w, ui_y)
             glVertex2f(ui_x + ui_w, ui_y + ui_h); glVertex2f(ui_x, ui_y + ui_h)
             glEnd()
             
-            # Textos do Terminal
-            seq_surf = comp_font_large.render(f"SEQUENCIA: {interacting_comp['sequence']}", True, (255, 255, 255))
-            in_surf = comp_font_large.render(f"INPUT: {interacting_comp['current_input']}_", True, (100, 255, 100))
-            
-            # Desenha Sequência e Input centralizados dentro da placa
-            glRasterPos2f(ui_x + 50, ui_y + ui_h * 0.3)
-            glDrawPixels(*seq_surf.get_size(), GL_RGBA, GL_UNSIGNED_BYTE, pygame.image.tostring(seq_surf, "RGBA", True))
-            
-            glRasterPos2f(ui_x + 50, ui_y + ui_h * 0.6)
-            glDrawPixels(*in_surf.get_size(), GL_RGBA, GL_UNSIGNED_BYTE, pygame.image.tostring(in_surf, "RGBA", True))
+            # desenha Sequência e Input centralizados dentro da placa
+            draw_ui_text(f"SEQUENCIA: {interacting_comp['sequence']}", ui_x + 50, ui_y + ui_h * 0.3, screen_width, screen_height, comp_font_large, (255, 255, 255))
+            draw_ui_text(f"INPUT: {interacting_comp['current_input']}_", ui_x + 50, ui_y + ui_h * 0.6, screen_width, screen_height, comp_font_large, (100, 255, 100))
         
-        if is_victory:
+        if is_game_over:
             glDisable(GL_TEXTURE_2D)
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             
-            # Fundo verde
+            # Fundo avermelhado de sangue
+            glColor4f(0.5, 0, 0, 0.4)
+            glBegin(GL_QUADS)
+            glVertex2f(0, 0); glVertex2f(screen_width, 0)
+            glVertex2f(screen_width, screen_height); glVertex2f(0, screen_height)
+            glEnd()
+            
+            glEnable(GL_TEXTURE_2D)
+            title_game_over.draw()
+            btn_restart_go.draw()
+            btn_load_go.draw()
+            btn_back_menu_go.draw()
+            btn_exit_desktop_go.draw()
+
+        elif is_victory:
+            glDisable(GL_TEXTURE_2D)
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            
+            # fundo verde
             glColor4f(0, 0.5, 0, 0.4)
             glBegin(GL_QUADS)
             glVertex2f(0, 0); glVertex2f(screen_width, 0)
@@ -1128,7 +1358,7 @@ def start(planet, saved_state=None):
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             
-            # Fundo escuro transparente
+            # fundo escuro transparente
             glColor4f(0, 0, 0, 0.6)
             glBegin(GL_QUADS)
             glVertex2f(0, 0); glVertex2f(screen_width, 0)
@@ -1142,10 +1372,12 @@ def start(planet, saved_state=None):
             btn_load_game.draw()
             btn_back_menu.draw()
             btn_exit_desktop.draw()
+            btn_toggle_debug.draw()
 
         prepare_3d()
 
         pygame.display.flip()
         clock.tick(FPS)
 
+    stop_level_audio()
     return result_state

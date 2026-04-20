@@ -8,7 +8,8 @@ from pygame.locals import *
 from OpenGL.GL import *
 from OpenGL.GLU import *
 from core.graphics_utils import load_texture
-from core.renderer import draw_cube, draw_floor_tile, draw_u_stairs, draw_computer, draw_tooltip, draw_collectible
+from core.renderer import (draw_cube, draw_floor_tile, draw_u_stairs, draw_computer, 
+                            draw_tooltip, draw_collectible, draw_stamina_bar, draw_hud_timed_message)
 from core.physics_engine import (BLOCK_SIZE, WALL_HEIGHT, is_wall, 
                                  has_ramp_below, get_target_y)
 from core.ui import Button, Title
@@ -215,133 +216,20 @@ def cutoff_target(level_map, player_position, monster_position, predicted_target
     return player_position
 
 
-def draw_stamina_bar(stamina, max_stamina, width, height):
-    bar_width = 340
-    bar_height = 26
-    padding = 10
-    x = padding
-    y = height - bar_height - padding
-    fill_width = int((stamina / max_stamina) * (bar_width - 4))
-
-    glMatrixMode(GL_PROJECTION)
-    glPushMatrix()
-    glLoadIdentity()
-    glOrtho(0, width, height, 0, -1, 1)
-
-    glMatrixMode(GL_MODELVIEW)
-    glPushMatrix()
-    glLoadIdentity()
-
-    glDisable(GL_DEPTH_TEST)
-    glDisable(GL_TEXTURE_2D)
-
-    # background
-    glColor3f(0.1, 0.1, 0.1)
-    glBegin(GL_QUADS)
-    glVertex2f(x, y)
-    glVertex2f(x + bar_width, y)
-    glVertex2f(x + bar_width, y + bar_height)
-    glVertex2f(x, y + bar_height)
-    glEnd()
-
-    # border
-    glColor3f(0.8, 0.8, 0.8)
-    glLineWidth(2.0)
-    glBegin(GL_LINE_LOOP)
-    glVertex2f(x, y)
-    glVertex2f(x + bar_width, y)
-    glVertex2f(x + bar_width, y + bar_height)
-    glVertex2f(x, y + bar_height)
-    glEnd()
-
-    # fill
-    glColor3f(0.0, 0.7, 0.3)
-    glBegin(GL_QUADS)
-    glVertex2f(x + 2, y + 2)
-    glVertex2f(x + 2 + fill_width, y + 2)
-    glVertex2f(x + 2 + fill_width, y + bar_height - 2)
-    glVertex2f(x + 2, y + bar_height - 2)
-    glEnd()
-
-    glEnable(GL_TEXTURE_2D)
-    glEnable(GL_DEPTH_TEST)
-
-    glMatrixMode(GL_PROJECTION)
-    glPopMatrix()
-    glMatrixMode(GL_MODELVIEW)
-    glPopMatrix()
 
 
-def draw_center_message(message, width, height, font, text_color, bg_color=(20, 20, 20)):
-    text_surface = font.render(f"  {message}  ", True, text_color, bg_color)
-    text_width, text_height = text_surface.get_size()
-    image_data = pygame.image.tostring(text_surface, "RGBA", True)
-
-    tex_id = glGenTextures(1)
-    glBindTexture(GL_TEXTURE_2D, tex_id)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, text_width, text_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data)
-
-    pos_x = (width - text_width) / 2
-    pos_y = (height - text_height) / 2
-
-    glMatrixMode(GL_PROJECTION)
-    glPushMatrix()
-    glLoadIdentity()
-    glOrtho(0, width, height, 0, -1, 1)
-
-    glMatrixMode(GL_MODELVIEW)
-    glPushMatrix()
-    glLoadIdentity()
-
-    glDisable(GL_DEPTH_TEST)
-    glEnable(GL_TEXTURE_2D)
-    glBindTexture(GL_TEXTURE_2D, tex_id)
-    glColor3f(1.0, 1.0, 1.0)
-
-    glBegin(GL_QUADS)
-    glTexCoord2f(0.0, 1.0); glVertex2f(pos_x, pos_y)
-    glTexCoord2f(1.0, 1.0); glVertex2f(pos_x + text_width, pos_y)
-    glTexCoord2f(1.0, 0.0); glVertex2f(pos_x + text_width, pos_y + text_height)
-    glTexCoord2f(0.0, 0.0); glVertex2f(pos_x, pos_y + text_height)
-    glEnd()
-
-    glDisable(GL_TEXTURE_2D)
-    glEnable(GL_DEPTH_TEST)
-
-    glMatrixMode(GL_PROJECTION)
-    glPopMatrix()
-    glMatrixMode(GL_MODELVIEW)
-    glPopMatrix()
-
-    glDeleteTextures(1, [tex_id])
 
 
-def show_end_screen(message, width, height, font, duration_ms=1800, text_color=(120, 255, 120)):
-    start_time = pygame.time.get_ticks()
-
-    while pygame.time.get_ticks() - start_time < duration_ms:
-        for event in pygame.event.get():
-            if event.type == QUIT:
-                return "QUIT"
-
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        draw_center_message(message, width, height, font, text_color)
-        pygame.display.flip()
-        pygame.time.delay(16)
-
-    return "DONE"
 
 
 def draw_h_counter(collected, total, width, height):
     if total <= 0:
         return
 
-    icon_size = 28
-    spacing = 10
-    start_x = width - ((icon_size + spacing) * total) - 130
-    y = height - 46
+    icon_size = int(height * 0.026)
+    spacing = int(width * 0.005)
+    start_x = int(width * 0.01)
+    y = int(height * 0.02)
 
     glMatrixMode(GL_PROJECTION)
     glPushMatrix()
@@ -374,24 +262,7 @@ def draw_h_counter(collected, total, width, height):
     glPopMatrix()
 
 
-def update_sprint_stamina(stamina, max_stamina, wants_to_sprint, dt):
-    stamina_depletion_rate = max_stamina / 3.0
-    stamina_recharge_rate = max_stamina / 3.75
 
-    sprinting = wants_to_sprint and stamina > 0.05
-
-    if sprinting:
-        stamina -= stamina_depletion_rate * dt
-        if stamina < 0.0:
-            stamina = 0.0
-            sprinting = False
-    else:
-        if stamina < max_stamina:
-            stamina += stamina_recharge_rate * dt
-            if stamina > max_stamina:
-                stamina = max_stamina
-
-    return stamina, sprinting
 
 # loop principal
 def start(planet, saved_state=None):
@@ -558,9 +429,9 @@ def start(planet, saved_state=None):
     sprint_speed = 0.28
     player_radius = 0.4 # tamanho do "corpo" do jogador para colisão não ficar muito justa na parede
 
-    stamina_max = 3.0
+    stamina_max = 100.0
     stamina = stamina_max
-    dt = 1.0 / FPS
+    stamina_exhausted = False
 
     def is_player_collision(x, z, y):
         for dx in (-player_radius, 0.0, player_radius):
@@ -613,6 +484,7 @@ def start(planet, saved_state=None):
         yaw = saved_state.get('yaw', 0.0)
         pitch = saved_state.get('pitch', 0.0)
         stamina = saved_state.get('stamina', stamina_max)
+        stamina_exhausted = saved_state.get('stamina_exhausted', False)
         collected_h_points = saved_state.get('collected_h_points', 0)
         # Restaura mapa (posições dos H coletados)
         if 'current_map' in saved_state:
@@ -695,6 +567,7 @@ def start(planet, saved_state=None):
             'yaw': yaw,
             'pitch': pitch,
             'stamina': stamina,
+            'stamina_exhausted': stamina_exhausted,
             'collected_h_points': collected_h_points,
             'current_map': current_map,
             'monsters_data': [{'x': m.x, 'z': m.z, 'spawn_layer': m.spawn_layer} for m in monsters],
@@ -871,9 +744,17 @@ def start(planet, saved_state=None):
             keys = pygame.key.get_pressed()
             yaw_rad = math.radians(yaw)
             
-            wants_to_sprint = keys[K_LSHIFT] or keys[K_RSHIFT]
-            stamina, sprinting = update_sprint_stamina(stamina, stamina_max, wants_to_sprint, dt)
-            move_speed = sprint_speed if sprinting else base_move_speed
+            # Stamina: mesma lógica de tau_ceti_iv
+            if stamina <= 0:
+                stamina_exhausted = True
+            if stamina_exhausted and stamina >= 50:
+                stamina_exhausted = False
+            if (keys[K_LSHIFT] or keys[K_RSHIFT]) and stamina > 0 and not stamina_exhausted:
+                move_speed = sprint_speed
+                stamina = max(0.0, stamina - 0.6)
+            else:
+                move_speed = base_move_speed
+                stamina = min(stamina_max, stamina + 0.15)
 
             # vetores de direção matemática
             front_x = math.sin(yaw_rad)
@@ -1001,10 +882,14 @@ def start(planet, saved_state=None):
                 )
                 glPopMatrix()
 
-        draw_stamina_bar(stamina, stamina_max, screen_width, screen_height)
+        draw_stamina_bar(stamina, stamina_max, screen_width, screen_height, stamina_exhausted)
         draw_h_counter(collected_h_points, total_h_points, screen_width, screen_height)
         if pygame.time.get_ticks() - level_start_time <= 2000:
-            draw_center_message("Encontre todos os pontos", screen_width, screen_height, center_hud_font, (255, 255, 255))
+            elapsed = pygame.time.get_ticks() - level_start_time
+            alpha = 1.0
+            if elapsed > 1500:
+                alpha = 1.0 - (elapsed - 1500) / 500.0
+            draw_hud_timed_message("Encontre todos os módulos", screen_width, screen_height, center_hud_font, alpha)
 
         # --- RENDERIZAÇÃO DO MENU DE PAUSA / GAME OVER / VITÓRIA ---
         if is_game_over:

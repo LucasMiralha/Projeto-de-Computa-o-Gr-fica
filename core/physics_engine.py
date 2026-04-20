@@ -29,7 +29,7 @@ def is_wall(x, y, z, level_map):
         if altura_absoluta - pe_y > 1.5:
             return True
 
-    if char == 'M':
+    if char == 'M' or char == 'B':
         block_x = col * BLOCK_SIZE
         block_z = row * BLOCK_SIZE
         

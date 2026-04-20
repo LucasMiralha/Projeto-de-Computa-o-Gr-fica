@@ -9,6 +9,7 @@ class PlanetaData:
     axis_tilt: float
     color_or_texture: str
     has_rings: bool
+    description: str = ""
     splash_image: str = "" 
     level_name: str = ""
     current_angle: float = 0.0
@@ -30,6 +31,7 @@ def load_planets(caminho_arquivo):
         for p in dados['planetas']:
             novo_planeta = PlanetaData(
                 name=p['nome'],
+                description=p.get('description', ""),
                 size=p['tamanho'],
                 rotation_speed=p['velocidade_rotacao'],
                 axis_tilt=p['inclinacao_eixo'],

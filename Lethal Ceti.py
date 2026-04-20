@@ -1,6 +1,45 @@
-from pygame import FULLSCREEN
 import os
 import sys
+import subprocess
+import importlib.util
+
+# --- VERIFICAÇÃO DE DEPENDÊNCIAS ---
+def check_dependencies():
+    """Verifica se as bibliotecas necessárias estão instaladas. Se não, tenta instalar via requirements.txt."""
+    required = ["pygame", "OpenGL", "numpy"]
+    missing = []
+    
+    for lib in required:
+        if importlib.util.find_spec(lib) is None:
+            missing.append(lib)
+    
+    if missing:
+        print(f"\nLethal Ceti: Dependências faltando detectadas: {', '.join(missing)}")
+        print("Tentando instalar dependências. Por favor, aguarde.")
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            req_path = os.path.join(script_dir, "requirements.txt")
+            
+            if os.path.exists(req_path):
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", req_path])
+            else:
+                # Fallback se o arquivo requirements.txt não estiver presente
+                for lib in missing:
+                    pkg = "PyOpenGL" if lib == "OpenGL" else lib
+                    subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+            print("Instalação concluída com sucesso!")
+            print("Reiniciando...\n")
+            os.execv(sys.executable, ['python'] + sys.argv)
+        except Exception as e:
+            print(f"\nNão foi possível instalar as dependências automaticamente: {e}")
+            print("Por favor, instale-as pelo cmd utilizando: pip install pygame PyOpenGL numpy")
+            sys.exit(1)
+
+# Executa a verificação antes de qualquer outro import pesado
+check_dependencies()
+
+# --- IMPORTS DO JOGO ---
+from pygame import FULLSCREEN
 import math
 import pygame
 import game_template
@@ -14,7 +53,8 @@ from core.models import PlanetaData, load_planets
 from core.graphics_utils import load_game_resources
 import core.save_manager as save_manager
 from core.renderer import (draw_ring, draw_background, draw_sphere, draw_fade_overlay,
-                            draw_tooltip, start_opengl)
+                            draw_tooltip, draw_parallax_background, start_opengl)
+
 
 # configura o OpenGL para desenhar em pixels (2D)
 def prepare_2d(width, height):
@@ -26,6 +66,8 @@ def prepare_2d(width, height):
     glPushMatrix()
     glLoadIdentity()
     glDisable(GL_DEPTH_TEST)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
 # restaura o OpenGL para o modo perspectiva (3D)
 def prepare_3d():
@@ -66,9 +108,66 @@ def main():
         screen_height
     )
 
-    fonte_tooltip = pygame.font.SysFont(font_path, 24, bold=True)
+    fonte_tooltip = pygame.font.Font(font_path, 24)
+    fonte_tooltip_desc = pygame.font.Font(font_path, 16)
     fonte_botao = pygame.font.Font(font_path, 28)
     fonte_titulo = pygame.font.SysFont('Arial', 72, bold=True)
+    
+    background_id = background_texture_id
+    ring_id = ring_texture_id
+
+    # --- LÓGICA DE RE-INICIALIZAÇÃO DE RECURSOS (PARA CASO O CONTEXTO OPENGL SEJA PERDIDO) ---
+    def reload_gl_resources():
+        """Recarrega texturas e objetos UI caso o contexto OpenGL tenha sido reiniciado."""
+        nonlocal star_system, background_id, ring_id, title_main, btn_continue_main, \
+                btn_new_game, btn_select_planet, btn_apagar_save, btn_exit_main
+        
+        print("\n[Sistema] Restaurando texturas e interface...")
+        # Recarrega recursos (apenas uma vez para pegar os novos IDs)
+        # Passamos None para json_path pois não queremos reler o arquivo, apenas recarregar as imagens na GPU
+        new_system, background_id, ring_id, _, _ = load_game_resources(
+            script_path, json_path, screen_width, screen_height
+        )
+        
+        # Sincroniza os IDs de textura dos planetas existentes para manter o progresso unlocked
+        for i, p in enumerate(star_system):
+            if i < len(new_system):
+                p.texture_id = new_system[i].texture_id
+                p.splash_texture_id = new_system[i].splash_texture_id
+
+        # Re-cria os elementos da UI (que geram novas texturas no __init__)
+        title_main = Title(
+            screen_width // 2 - 300, screen_height // 2 - 250, 600, 100,
+            "LETHAL CETI", fonte_titulo, bg_color=(0, 0, 0, 0),
+            text_color=(255, 255, 255, 255), align="center"
+        )
+        
+        btn_continue_main = Button(
+            screen_width // 2 - 150, screen_height // 2 - 120, 300, 50, "CONTINUAR",
+            fonte_botao, cb_carregar_main, base_color=button_color,
+            hover_color=hover_button_color, text_color=font_button_color
+        )
+        btn_new_game = Button(
+            screen_width // 2 - 150, screen_height // 2 - 50, 300, 50, "NOVO JOGO",
+            fonte_botao, cb_novo_jogo, base_color=button_color,
+            hover_color=hover_button_color, text_color=font_button_color
+        )
+        btn_select_planet = Button(
+            screen_width // 2 - 200, screen_height // 2 + 20, 400, 50, "SELECIONAR PLANETA",
+            fonte_botao, cb_selecionar_planeta, base_color=button_color,
+            hover_color=hover_button_color, text_color=font_button_color
+        )
+        btn_apagar_save = Button(
+            screen_width // 2 - 150, screen_height // 2 + 90, 300, 50, "APAGAR SAVE",
+            fonte_botao, cb_apagar_save, base_color=button_color,
+            hover_color=hover_button_color, text_color=font_button_color
+        )
+        btn_exit_main = Button(
+            screen_width // 2 - 100, screen_height // 2 + 160, 200, 50, "SAIR",
+            fonte_botao, cb_sair_programa, base_color=button_color,
+            hover_color=hover_button_color, text_color=font_button_color
+        )
+        _update_save_button_state()
 
     # carrega a música de ambiente
     music_path = os.path.join(script_path, 'Assets', 'Sounds', 'Deep Space Travel Ambience 3 (Menu).mp3')
@@ -86,33 +185,10 @@ def main():
     # --- LÓGICA DE ESTADOS E BOTÕES ---
     app_state = "MENU_INICIAL" # Estados: MENU_INICIAL, SISTEMA_SOLAR, PAUSE
 
-    def cb_iniciar():
-        nonlocal app_state
-        app_state = "SISTEMA_SOLAR"
-
-    def cb_sair_programa():
-        pygame.quit()
-        sys.exit()
-
-    def cb_voltar_menu():
-        nonlocal app_state
-        app_state = "MENU_INICIAL"
-
-    # Criando botões do Menu Inicial
-    button_color = (0, 0, 0, 0)
-    font_button_color = (95, 198, 139, 255)
-    hover_button_color = (95, 198, 139, 150)
-
-    # Inicialização do Título (PEP8)
-    title_main = Title(
-        screen_width // 2 - 300, screen_height // 2 - 250, 600, 100,
-        "LETHAL CETI", fonte_titulo, bg_color=(0, 0, 0, 0),
-        text_color=(255, 255, 255, 0), align="center"
-    )
-
     def _update_save_button_state():
         """Atualiza o estado do botão CONTINUAR baseado na existência de saves."""
-        btn_continue_main.disabled = not save_manager.has_any_save()
+        if btn_continue_main:
+            btn_continue_main.disabled = not save_manager.has_any_save()
 
     def cb_carregar_main():
         nonlocal app_state, transition_state, target_planet, saved_level_state
@@ -123,7 +199,6 @@ def main():
                 if planet.name in main_data["unlocked_planets"]:
                     planet.is_unlocked = True
         
-        # 1. Tenta carregar o save de uma fase em andamento
         current_lvl = main_data.get("current_level")
         level_data = None
         if current_lvl:
@@ -137,10 +212,9 @@ def main():
             if target_planet:
                 saved_level_state = level_data
                 app_state = "SISTEMA_SOLAR"
-                transition_state = "PULLBACK" # Faz a animação da câmera antes de entrar
+                transition_state = "PULLBACK"
                 return
                 
-        # 2. Se não houver fase em andamento, inicia a fase mais avançada do zero
         planet_order = [p.name for p in star_system]
         most_advanced = save_manager.get_most_advanced_planet(planet_order)
         if most_advanced:
@@ -149,63 +223,50 @@ def main():
                     target_planet = p
                     break
             if target_planet:
-                saved_level_state = None  # Começa do zero
+                saved_level_state = None
                 app_state = "SISTEMA_SOLAR"
-                transition_state = "PULLBACK" # Faz a animação da câmera antes de entrar
+                transition_state = "PULLBACK"
                 return
-                
-        # 3. Fallback: vai para o menu do sistema solar livre
         app_state = "SISTEMA_SOLAR"
 
     def cb_novo_jogo():
         nonlocal app_state
-        # Reinicia o progresso da memória ativa para padrão antes de entrar
         for i, planet in enumerate(star_system):
             planet.is_unlocked = (i == 0)
         app_state = "SISTEMA_SOLAR"
         
     def cb_selecionar_planeta():
         nonlocal app_state
-        # Entra direto no sistema solar com a memória atual
         app_state = "SISTEMA_SOLAR"
-
-    btn_continue_main = Button(
-        screen_width // 2 - 150, screen_height // 2 - 120, 300, 50, "CONTINUAR",
-        fonte_botao, cb_carregar_main, base_color=button_color,
-        hover_color=hover_button_color, text_color=font_button_color
-    )
-    btn_new_game = Button(
-        screen_width // 2 - 150, screen_height // 2 - 50, 300, 50, "NOVO JOGO",
-        fonte_botao, cb_novo_jogo, base_color=button_color,
-        hover_color=hover_button_color, text_color=font_button_color
-    )
-    btn_select_planet = Button(
-        screen_width // 2 - 200, screen_height // 2 + 20, 400, 50, "SELECIONAR PLANETA",
-        fonte_botao, cb_selecionar_planeta, base_color=button_color,
-        hover_color=hover_button_color, text_color=font_button_color
-    )
 
     def cb_apagar_save():
         save_manager.delete_all_saves()
         print("\nTodos os saves foram apagados.")
-        # Reseta o progresso na memória
         for i, planet in enumerate(star_system):
             planet.is_unlocked = (i == 0)
         _update_save_button_state()
 
-    btn_apagar_save = Button(
-        screen_width // 2 - 150, screen_height // 2 + 90, 300, 50, "APAGAR SAVE",
-        fonte_botao, cb_apagar_save, base_color=button_color,
-        hover_color=hover_button_color, text_color=font_button_color
-    )
-    btn_exit_main = Button(
-        screen_width // 2 - 100, screen_height // 2 + 160, 200, 50, "SAIR",
-        fonte_botao, cb_sair_programa, base_color=button_color,
-        hover_color=hover_button_color, text_color=font_button_color
-    )
+    def cb_sair_programa():
+        pygame.quit()
+        sys.exit()
 
-    # Define estado inicial do botão CONTINUAR
-    _update_save_button_state()
+    def cb_voltar_menu():
+        nonlocal app_state
+        app_state = "MENU_INICIAL"
+
+    # Cores padrões dos botões
+    button_color = (0, 0, 0, 0)
+    font_button_color = (95, 198, 139, 255)
+    hover_button_color = (95, 198, 139, 150)
+
+    # --- INICIALIZAÇÃO INICIAL DA UI ---
+    title_main = None
+    btn_continue_main = None
+    btn_new_game = None
+    btn_select_planet = None
+    btn_apagar_save = None
+    btn_exit_main = None
+    reload_gl_resources()
 
     # posições em que cada planeta vai ficar na cena
     planet_positions = [
@@ -233,13 +294,13 @@ def main():
     if star_system and not any(p.is_unlocked for p in star_system):
         star_system[0].is_unlocked = True
 
-    # variaveis de controle de camera
+    # variáveis de controle de câmera
     cam_x, cam_y, cam_z = 0.0, 0.0, -50.0
 
     # velocidade da câmera durante a transição
     cam_speed = 0.025
     
-    # variaveis da maquina de estados da transicao
+    # variáveis da máquina de estados da transição
     # estados: IDLE, PULLBACK, APPROACH, FADE_OUT, SPLASH, START_LEVEL
     transition_state = "IDLE" 
     target_planet = None
@@ -355,6 +416,10 @@ def main():
                 # Reinicia a música ambiente do menu
                 pygame.mixer.music.play(-1)
                 
+                # RECARREGA TUDO PARA EVITAR QUADRADOS BRANCOS (CONTEXTO RESETADO)
+                start_opengl(screen_height, screen_width)
+                reload_gl_resources()
+                
                 next_planet_to_load = None
                 if resultado_fase in ["win", "WIN_CONTINUE"]:
                     # Limpa o save da fase vencida
@@ -373,9 +438,6 @@ def main():
                             )
                             break
                 
-                # reseta todas as variáveis de visualização
-                start_opengl(screen_height, screen_width)
-                
                 if resultado_fase == "LOAD_GAME":
                     cb_carregar_main()
                 elif resultado_fase == "RESTART":
@@ -384,7 +446,7 @@ def main():
                 elif resultado_fase == "WIN_CONTINUE" and next_planet_to_load:
                     target_planet = next_planet_to_load
                     saved_level_state = None
-                    transition_state = "START_LEVEL"
+                    transition_state = "PULLBACK"
                 else:
                     app_state = "SISTEMA_SOLAR"
                     transition_state = "IDLE"
@@ -405,8 +467,8 @@ def main():
         
         if app_state == "MENU_INICIAL":
             # Agora exibe o fundo espacial também no menu principal
-            if background_texture_id:
-                draw_background(background_texture_id)
+            if background_id:
+                draw_parallax_background(background_id, mouse_pos, screen_width, screen_height)
                 
             prepare_2d(screen_width, screen_height)
             title_main.draw() # Desenha o título do jogo
@@ -422,8 +484,8 @@ def main():
             glClearColor(0, 0, 0, 1)
 
             # Desenha o fundo espacial
-            if background_texture_id:
-                draw_background(background_texture_id)
+            if background_id:
+                draw_parallax_background(background_id, mouse_pos, screen_width, screen_height)
 
             glMatrixMode(GL_MODELVIEW)
             glLoadIdentity() 
@@ -453,12 +515,21 @@ def main():
 
                 glPushMatrix() 
                 glTranslatef(planet.pos_x, planet.pos_y, planet.pos_z) 
+                # Converte para espaço de visualização planetária (Y-up e Tilt)
                 glRotatef(-90.0, 1, 0, 0)
                 glRotatef(planet.axis_tilt, 1, 0, 0) 
-                if planet.has_rings:
-                    draw_ring(planet.size * 1.2, planet.size * 1.9, ring_texture_id)
+                
+                # 1. Desenha o Planeta (com rotação própria isolada)
+                glPushMatrix()
                 glRotatef(planet.current_angle, 0, 0, 1)
                 draw_sphere(planet.size, planet.color_or_texture, planet.texture_id)
+                glPopMatrix()
+
+                # 2. Desenha o anel (segue o tilt, mas fica estático em relação à rotação do planeta)
+                # Desenhamos depois do planeta para que a transparência (Z-buffer) funcione corretamente
+                if planet.has_rings:
+                    draw_ring(planet.size * 1.2, planet.size * 1.9, ring_id)
+                
                 glPopMatrix() 
 
             # Desenha a Tooltip se não estiver pausado
@@ -467,7 +538,13 @@ def main():
                     texto_ui, cor_texto = focused_planet.name, (255, 255, 255)
                 else:
                     texto_ui, cor_texto = f"{focused_planet.name} (BLOQUEADO)", (255, 80, 80)
-                draw_tooltip(texto_ui, mouse_pos[0], mouse_pos[1], screen_width, screen_height, fonte_tooltip, cor_texto)
+                draw_tooltip(
+                    texto_ui, focused_planet.description,
+                    mouse_pos[0], mouse_pos[1],
+                    screen_width, screen_height,
+                    fonte_tooltip, fonte_tooltip_desc,
+                    cor_texto
+                )
 
             if transition_state in ["SPLASH_FADE_IN", "SPLASH_WAIT"]:
                 if target_planet and target_planet.splash_texture_id:

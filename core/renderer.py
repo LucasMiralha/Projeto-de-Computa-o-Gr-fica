@@ -5,6 +5,27 @@ from OpenGL.GLU import *
 from core.graphics_utils import hex_to_rgb
 from core.physics_engine import *
 
+# Cache para Display Lists (Otimização para GPU)
+_sphere_display_lists = {}
+_ring_display_lists = {}
+_skysphere_display_list = None
+_quadric = None
+
+def _get_quadric():
+    global _quadric
+    if _quadric is None:
+        _quadric = gluNewQuadric()
+        gluQuadricTexture(_quadric, GL_TRUE)
+    return _quadric
+
+def clear_renderer_caches():
+    """Limpa todos os caches de display lists e objetos quadric para evitar erros em reset de contexto."""
+    global _sphere_display_lists, _ring_display_lists, _skysphere_display_list, _quadric
+    _sphere_display_lists.clear()
+    _ring_display_lists.clear()
+    _skysphere_display_list = None
+    _quadric = None
+
 
 def draw_textured_floor_tile(x, y, z, size, texture_id=None, bottom_texture_id=None, color=(0.1, 0.1, 0.1), uv_scale=1.0):
     if texture_id is None and bottom_texture_id is None:
@@ -28,11 +49,13 @@ def draw_textured_floor_tile(x, y, z, size, texture_id=None, bottom_texture_id=N
     if bottom_texture_id is not None:
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, bottom_texture_id)
+        # Offset minúsculo para baixo para evitar Z-fighting com o chão do andar acima
+        y_bottom = y + 3.99
         glBegin(GL_QUADS)
-        glTexCoord2f(0.0, 0.0); glVertex3f(x - half, y, z - half)
-        glTexCoord2f(0.0, uv_scale); glVertex3f(x - half, y, z + half)
-        glTexCoord2f(uv_scale, uv_scale); glVertex3f(x + half, y, z + half)
-        glTexCoord2f(uv_scale, 0.0); glVertex3f(x + half, y, z - half)
+        glTexCoord2f(0.0, 0.0); glVertex3f(x - half, y_bottom, z - half)
+        glTexCoord2f(0.0, uv_scale); glVertex3f(x - half, y_bottom, z + half)
+        glTexCoord2f(uv_scale, uv_scale); glVertex3f(x + half, y_bottom, z + half)
+        glTexCoord2f(uv_scale, 0.0); glVertex3f(x + half, y_bottom, z - half)
         glEnd()
         glDisable(GL_TEXTURE_2D)
 
@@ -76,68 +99,241 @@ def draw_textured_cube(x, y, z, size, height, texture_id=None, color=(0.15, 0.2,
     glDisable(GL_TEXTURE_2D)
 
 def draw_ring(internal_radius, external_radius, texture_id):
-    # gerando malha com furo no meio
-    quadric = gluNewQuadric()
+    key = (internal_radius, external_radius)
     
+    if key not in _ring_display_lists:
+        display_list = glGenLists(1)
+        glNewList(display_list, GL_COMPILE)
+        quadric = gluNewQuadric()
+        gluQuadricTexture(quadric, GL_TRUE)
+        gluDisk(quadric, internal_radius, external_radius, 128, 1)
+        gluDeleteQuadric(quadric)
+        glEndList()
+        _ring_display_lists[key] = display_list
+
     if texture_id is not None:
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, texture_id)
-        gluQuadricTexture(quadric, GL_TRUE)
-        # ultimo valor em 1 para garantir canal alpha (transparência)
-        glColor4f(1.0, 1.0, 1.0, 1.0) 
+        # Otimização crucial: descarta pixels transparentes para não escrever no Depth Buffer
+        # Isso permite ver o planeta através das partes transparentes do anel
+        glEnable(GL_ALPHA_TEST)
+        glAlphaFunc(GL_GREATER, 0.1)
+        glColor4f(1.0, 1.0, 1.0, 1.0)
         
-    # parâmetros: quadric, raio interno, raio externo, fatias, anéis_concêntricos
-    # 64 fatias deixam o anel bem redondinho O
-    gluDisk(quadric, internal_radius, external_radius, 64, 1)
-    
-    gluDeleteQuadric(quadric)
+    glCallList(_ring_display_lists[key])
     
     if texture_id is not None:
+        glDisable(GL_ALPHA_TEST)
         glDisable(GL_TEXTURE_2D)
 
 
 def draw_sphere(radius, hex_color, texture_id):
-    # cria uma esfera
-    quadric = gluNewQuadric()
+    # Arredonda o raio para cache (evita criar milhares de listas se o raio variar micro-mimetricamente)
+    key = round(radius, 3)
     
-    # definindo a cor
+    if key not in _sphere_display_lists:
+        display_list = glGenLists(1)
+        glNewList(display_list, GL_COMPILE)
+        quadric = gluNewQuadric()
+        gluQuadricTexture(quadric, GL_TRUE)
+        gluSphere(quadric, 1.0, 32, 32) # Esfera unitária, escalamos depois
+        gluDeleteQuadric(quadric)
+        glEndList()
+        _sphere_display_lists[key] = display_list
+
+    glPushMatrix()
+    glScalef(radius, radius, radius)
+    
     if texture_id is not None:
-        # liga o modo de textura 2D
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, texture_id)
-        gluQuadricTexture(quadric, GL_TRUE)
-        # branco para não alterar a cor da textura
         glColor3f(1.0, 1.0, 1.0)
     else:
-        # sem textura, pinta cor sólida
         glDisable(GL_TEXTURE_2D)
         if hex_color.startswith('#'):
             r, g, b = hex_to_rgb(hex_color)
             glColor3f(r, g, b)
 
-    # parâmetros: quadric, raio, latitude, longitude
-    # uma esfera com 32 divisões horizontais e verticais fica minimamente suave
-    gluSphere(quadric, radius, 32, 32)
-    
-    gluDeleteQuadric(quadric)
-    # dedabilita para próximo carregamento
+    glCallList(_sphere_display_lists[key])
+    glPopMatrix()
     glDisable(GL_TEXTURE_2D)
 
 
-def draw_tooltip(text, mouse_x, mouse_y, width, height, font, text_color):
-    # renderiza o texto no PyGame (Branco com fundo cinza escuro)
-    text_surface = font.render(f"  {text}  ", True, text_color, (40, 40, 40))
-    text_width, text_height = text_surface.get_size()
-    dados_imagem = pygame.image.tostring(text_surface, "RGBA", True)
+def draw_parallax_background(texture_id, mouse_pos, screen_width, screen_height, intensity=0.01):
+    if texture_id is None:
+        return
 
-    # gera uma textura temporária
+    # Calcula o deslocamento relativo do mouse (-1 a 1)
+    # Ter o centro como referência (0,0)
+    rel_x = (mouse_pos[0] / screen_width) * 2 - 1
+    rel_y = (mouse_pos[1] / screen_height) * 2 - 1
+    
+    # Inverte para o fundo se mover na direção OPOSTA
+    off_x = -rel_x * intensity
+    off_y =  rel_y * intensity # NDC as coordenadas Y são invertidas em relação ao Mouse
+
+    glMatrixMode(GL_PROJECTION)
+    glPushMatrix()
+    glLoadIdentity() 
+
+    glMatrixMode(GL_MODELVIEW)
+    glPushMatrix()
+    glLoadIdentity()
+
+    glDisable(GL_DEPTH_TEST)
+    glEnable(GL_TEXTURE_2D)
+    glBindTexture(GL_TEXTURE_2D, texture_id)
+    glColor3f(1.0, 1.0, 1.0)
+
+    # Zoom leve para compensar o movimento e não ver bordas pretas
+    zoom = 1.0 + intensity
+
+    glBegin(GL_QUADS)
+    glTexCoord2f(0.0, 0.0); glVertex2f(-zoom + off_x, -zoom + off_y)
+    glTexCoord2f(1.0, 0.0); glVertex2f( zoom + off_x, -zoom + off_y)
+    glTexCoord2f(1.0, 1.0); glVertex2f( zoom + off_x,  zoom + off_y)
+    glTexCoord2f(0.0, 1.0); glVertex2f(-zoom + off_x,  zoom + off_y)
+    glEnd()
+
+    glDisable(GL_TEXTURE_2D)
+    glEnable(GL_DEPTH_TEST)
+    
+    glMatrixMode(GL_PROJECTION)
+    glPopMatrix()
+    glMatrixMode(GL_MODELVIEW)
+    glPopMatrix()
+
+
+def draw_tooltip(title, description, mouse_x, mouse_y, screen_width, screen_height, font_title, font_desc, text_color):
+    """Desenha uma caixa de informação com título e descrição planetária, suportando múltiplas linhas."""
+    
+    # Configurações de layout
+    max_tooltip_width = 480
+    padding = 20
+    line_spacing = 5
+    wrap_width = max_tooltip_width - (padding * 2)
+    
+    # 1. Renderiza o título
+    title_surface = font_title.render(title, True, text_color)
+    t_w, t_h = title_surface.get_size()
+    
+    # 2. Processa a descrição com quebra de linha (\n) e wrap automático
+    paragraphs = description.split('\n')
+    wrapped_lines = []
+    
+    for p in paragraphs:
+        if not p.strip():
+            wrapped_lines.append("") # Preserva linhas vazias
+            continue
+            
+        words = p.split(' ')
+        current_line = []
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            w, _ = font_desc.size(test_line)
+            if w <= wrap_width:
+                current_line.append(word)
+            else:
+                wrapped_lines.append(' '.join(current_line))
+                current_line = [word]
+        wrapped_lines.append(' '.join(current_line))
+    
+    # 3. Renderiza as superfícies de texto da descrição
+    desc_color = (210, 210, 210)
+    desc_surfaces = [font_desc.render(line, True, desc_color) for line in wrapped_lines]
+    
+    # 4. Calcula dimensões finais da caixa
+    desc_w = 0
+    desc_h = 0
+    for surf in desc_surfaces:
+        sw, sh = surf.get_size()
+        desc_w = max(desc_w, sw)
+        desc_h += sh + line_spacing
+    
+    box_width = max(t_w, desc_w, 360) + (padding * 2)
+    if box_width > max_tooltip_width: box_width = max_tooltip_width
+    
+    box_height = t_h + desc_h + (padding * 2) + 8 # gap entre título e desc
+    
+    # 5. Cria a superfície final do Pygame
+    tooltip_surface = pygame.Surface((box_width, box_height), pygame.SRCALPHA)
+    
+    # Fundo estilizado (Escuro com leve brilho nas bordas)
+    pygame.draw.rect(tooltip_surface, (20, 20, 20, 235), (0, 0, box_width, box_height), border_radius=10)
+    pygame.draw.rect(tooltip_surface, (130, 130, 130, 255), (0, 0, box_width, box_height), 2, border_radius=10)
+    
+    # Desenha os textos na superfície
+    tooltip_surface.blit(title_surface, (padding, padding))
+    
+    current_y = padding + t_h + 10
+    for surf in desc_surfaces:
+        tooltip_surface.blit(surf, (padding, current_y))
+        current_y += surf.get_height() + line_spacing
+        
+    # 6. Converte para textura OpenGL
+    dados_imagem = pygame.image.tostring(tooltip_surface, "RGBA", True)
     tex_id = glGenTextures(1)
     glBindTexture(GL_TEXTURE_2D, tex_id)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, text_width, text_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, dados_imagem)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, box_width, box_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, dados_imagem)
 
-    # entra no modo 2D (NDC)
+    # 7. Desenho 2D em OpenGL
+    glMatrixMode(GL_PROJECTION)
+    glPushMatrix()
+    glLoadIdentity()
+    glOrtho(0, screen_width, screen_height, 0, -1, 1)
+
+    glMatrixMode(GL_MODELVIEW)
+    glPushMatrix()
+    glLoadIdentity()
+
+    glDisable(GL_DEPTH_TEST)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    glEnable(GL_TEXTURE_2D)
+    glBindTexture(GL_TEXTURE_2D, tex_id)
+    glColor4f(1.0, 1.0, 1.0, 1.0)
+
+    # Lógica de posicionamento (Confinamento nas bordas da tela)
+    pos_x = mouse_x + 25
+    pos_y = mouse_y + 25
+    
+    # Se bater na direita, inverte para a esquerda do cursor
+    if pos_x + box_width > screen_width:
+        pos_x = mouse_x - box_width - 10
+    
+    # Se bater em baixo, sobe
+    if pos_y + box_height > screen_height:
+        pos_y = screen_height - box_height - 10
+        
+    # Garantia final: nunca sair pelo topo ou esquerda (caso a caixa seja maior que a tela)
+    if pos_x < 5: pos_x = 5
+    if pos_y < 5: pos_y = 5
+
+    glBegin(GL_QUADS)
+    glTexCoord2f(0.0, 1.0); glVertex2f(pos_x, pos_y)
+    glTexCoord2f(1.0, 1.0); glVertex2f(pos_x + box_width, pos_y)
+    glTexCoord2f(1.0, 0.0); glVertex2f(pos_x + box_width, pos_y + box_height)
+    glTexCoord2f(0.0, 0.0); glVertex2f(pos_x, pos_y + box_height)
+    glEnd()
+
+    glDisable(GL_TEXTURE_2D)
+    glEnable(GL_DEPTH_TEST)
+
+    glMatrixMode(GL_PROJECTION)
+    glPopMatrix()
+    glMatrixMode(GL_MODELVIEW)
+    glPopMatrix()
+
+    glDeleteTextures(1, [tex_id])
+
+
+def draw_fade_overlay(width, height, alpha):
+    # so desenha se houver alguma opacidade
+    if alpha <= 0.0:
+        return
+
     glMatrixMode(GL_PROJECTION)
     glPushMatrix()
     glLoadIdentity()
@@ -147,35 +343,29 @@ def draw_tooltip(text, mouse_x, mouse_y, width, height, font, text_color):
     glPushMatrix()
     glLoadIdentity()
 
-    # desliga a profundidade para desenhar sempre por cima
+    # desliga a profundidade e desliga texturas para desenhar cor solida
     glDisable(GL_DEPTH_TEST)
-    glEnable(GL_TEXTURE_2D)
-    glBindTexture(GL_TEXTURE_2D, tex_id)
-    glColor3f(1.0, 1.0, 1.0)
+    glDisable(GL_TEXTURE_2D)
+    
+    # Habilita transparência para o fade
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    
+    # cor preta com o canal alpha (transparencia) variavel
+    glColor4f(0.0, 0.0, 0.0, alpha)
 
-    # deslocamento leve para o cursor não tampar o texto
-    pos_x = mouse_x + 15
-    pos_y = mouse_y + 15
-
-    # desenha o quad com o texto
     glBegin(GL_QUADS)
-    glTexCoord2f(0.0, 1.0); glVertex2f(pos_x, pos_y)
-    glTexCoord2f(1.0, 1.0); glVertex2f(pos_x + text_width, pos_y)
-    glTexCoord2f(1.0, 0.0); glVertex2f(pos_x + text_width, pos_y + text_height)
-    glTexCoord2f(0.0, 0.0); glVertex2f(pos_x, pos_y + text_height)
+    glVertex2f(0, 0)
+    glVertex2f(width, 0)
+    glVertex2f(width, height)
+    glVertex2f(0, height)
     glEnd()
 
-    # restaura o estado original
-    glDisable(GL_TEXTURE_2D)
     glEnable(GL_DEPTH_TEST)
-
     glMatrixMode(GL_PROJECTION)
     glPopMatrix()
     glMatrixMode(GL_MODELVIEW)
     glPopMatrix()
-
-    # deleta a textura temporária para não estourar a memória
-    glDeleteTextures(1, [tex_id])
 
 
 def draw_background(texture_id):
@@ -191,11 +381,13 @@ def draw_background(texture_id):
     glPushMatrix()
     glLoadIdentity()
 
-    # configurações de desenho (desliga o 3D, liga a textura)
+    # configurações de desenho
     glDisable(GL_DEPTH_TEST)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
     glEnable(GL_TEXTURE_2D)
     glBindTexture(GL_TEXTURE_2D, texture_id)
-    glColor3f(1.0, 1.0, 1.0)
+    glColor4f(1.0, 1.0, 1.0, 1.0)
 
     # desenha o quad cravado nas bordas absolutas da tela
     glBegin(GL_QUADS)
@@ -229,42 +421,11 @@ def draw_background(texture_id):
     glPopMatrix()
 
 
-def draw_fade_overlay(width, height, alpha):
-    # so desenha se houver alguma opacidade
-    if alpha <= 0.0:
-        return
-
-    glMatrixMode(GL_PROJECTION)
-    glPushMatrix()
-    glLoadIdentity()
-    glOrtho(0, width, height, 0, -1, 1)
-
-    glMatrixMode(GL_MODELVIEW)
-    glPushMatrix()
-    glLoadIdentity()
-
-    # desliga a profundidade e desliga texturas para desenhar cor solida
-    glDisable(GL_DEPTH_TEST)
-    glDisable(GL_TEXTURE_2D)
-    
-    # cor preta com o canal alpha (transparencia) variavel
-    glColor4f(0.0, 0.0, 0.0, alpha)
-
-    glBegin(GL_QUADS)
-    glVertex2f(0, 0)
-    glVertex2f(width, 0)
-    glVertex2f(width, height)
-    glVertex2f(0, height)
-    glEnd()
-
-    glEnable(GL_DEPTH_TEST)
-    glMatrixMode(GL_PROJECTION)
-    glPopMatrix()
-    glMatrixMode(GL_MODELVIEW)
-    glPopMatrix()
-
 # prepara a cena e as regras de renderização 3D.
 def start_opengl(height, width):
+    # Limpa os caches de desenhos para reconstruir Display Lists no novo contexto
+    clear_renderer_caches()
+
     # define a área exata da tela
     glViewport(0, 0, int(width), int(height))
 
@@ -889,3 +1050,146 @@ def draw_exit_module(x, y, z, size, locked_color, unlocked_color, unlocked, puls
     glVertex3f(x + half, y + 2.65, z + half)
     glVertex3f(x + half, y + 2.65, z - half)
     glEnd()
+
+
+def draw_stamina_bar(stamina, max_stamina, width, height, exhausted=False):
+    """Desenha a barra de stamina no canto inferior esquerdo da tela.
+    Todas as dimensões são proporcionais ao tamanho do monitor."""
+    bar_width = int(width * 0.18)
+    bar_height = int(height * 0.025)
+    padding_x = int(width * 0.01)
+    padding_y = int(height * 0.02)
+    x = padding_x
+    y = height - bar_height - padding_y
+    fill_ratio = max(0.0, min(1.0, stamina / max_stamina))
+    fill_width = int(fill_ratio * (bar_width - 4))
+
+    glMatrixMode(GL_PROJECTION)
+    glPushMatrix()
+    glLoadIdentity()
+    glOrtho(0, width, height, 0, -1, 1)
+
+    glMatrixMode(GL_MODELVIEW)
+    glPushMatrix()
+    glLoadIdentity()
+
+    glDisable(GL_DEPTH_TEST)
+    glDisable(GL_TEXTURE_2D)
+
+    # background
+    glColor3f(0.1, 0.1, 0.1)
+    glBegin(GL_QUADS)
+    glVertex2f(x, y)
+    glVertex2f(x + bar_width, y)
+    glVertex2f(x + bar_width, y + bar_height)
+    glVertex2f(x, y + bar_height)
+    glEnd()
+
+    # border
+    glColor3f(0.8, 0.8, 0.8)
+    glLineWidth(2.0)
+    glBegin(GL_LINE_LOOP)
+    glVertex2f(x, y)
+    glVertex2f(x + bar_width, y)
+    glVertex2f(x + bar_width, y + bar_height)
+    glVertex2f(x, y + bar_height)
+    glEnd()
+
+    # fill
+    if exhausted:
+        glColor3f(1.0, 0.0, 0.0) # Vermelho se exausto
+    else:
+        glColor3f(0.0, 0.7, 0.3) # Verde normal
+        
+    glBegin(GL_QUADS)
+    glVertex2f(x + 2, y + 2)
+    glVertex2f(x + 2 + fill_width, y + 2)
+    glVertex2f(x + 2 + fill_width, y + bar_height - 2)
+    glVertex2f(x + 2, y + bar_height - 2)
+    glEnd()
+
+    glEnable(GL_TEXTURE_2D)
+    glEnable(GL_DEPTH_TEST)
+
+    glMatrixMode(GL_PROJECTION)
+    glPopMatrix()
+    glMatrixMode(GL_MODELVIEW)
+    glPopMatrix()
+
+
+def draw_ui_text(text, x, y, width, height, font, color=(255, 255, 255), alpha=1.0, align="left"):
+    """Função genérica para desenhar texto 2D com texturas OpenGL.
+    Suporta alinhamento ('left', 'center', 'right') e transparência."""
+    if not text:
+        return
+
+    text_surface = font.render(text, True, color)
+    text_w, text_h = text_surface.get_size()
+    text_data = pygame.image.tostring(text_surface, "RGBA", True)
+
+    pos_x = x
+    if align == "center":
+        pos_x = x - (text_w / 2)
+    elif align == "right":
+        pos_x = x - text_w
+
+    tex_id = glGenTextures(1)
+    glBindTexture(GL_TEXTURE_2D, tex_id)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, text_w, text_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, text_data)
+
+    glMatrixMode(GL_PROJECTION)
+    glPushMatrix()
+    glLoadIdentity()
+    glOrtho(0, width, height, 0, -1, 1)
+
+    glMatrixMode(GL_MODELVIEW)
+    glPushMatrix()
+    glLoadIdentity()
+
+    glDisable(GL_DEPTH_TEST)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    glEnable(GL_TEXTURE_2D)
+    
+    glColor4f(1.0, 1.0, 1.0, alpha)
+
+    glBegin(GL_QUADS)
+    glTexCoord2f(0.0, 1.0); glVertex2f(pos_x, y)
+    glTexCoord2f(1.0, 1.0); glVertex2f(pos_x + text_w, y)
+    glTexCoord2f(1.0, 0.0); glVertex2f(pos_x + text_w, y + text_h)
+    glTexCoord2f(0.0, 0.0); glVertex2f(pos_x, y + text_h)
+    glEnd()
+
+    glDisable(GL_TEXTURE_2D)
+    glEnable(GL_DEPTH_TEST)
+
+    glMatrixMode(GL_PROJECTION)
+    glPopMatrix()
+    glMatrixMode(GL_MODELVIEW)
+    glPopMatrix()
+
+    glDeleteTextures(1, [tex_id])
+
+
+def draw_hud_objective(text, width, height, font, color=(240, 240, 240)):
+    """Desenha texto de objetivo no canto superior esquerdo da tela."""
+    x = int(width * 0.01)
+    y = int(height * 0.02)
+    draw_ui_text(text, x, y, width, height, font, color, align="left")
+
+
+def draw_hud_timed_message(text, width, height, font, alpha, color=(240, 240, 240)):
+    """Desenha mensagem temporária com transparência na posição 2/3 acima do centro."""
+    x = width / 2
+    y = int(height * 0.167)
+    draw_ui_text(text, x, y, width, height, font, color, alpha=alpha, align="center")
+
+
+def draw_hud_interaction_prompt(text, width, height, font, color=(240, 240, 240)):
+    """Desenha prompt de interação centralizado a 2/3 abaixo do centro da tela."""
+    x = width / 2
+    y = int(height * 0.833)
+    draw_ui_text(text, x, y, width, height, font, color, align="center")
+

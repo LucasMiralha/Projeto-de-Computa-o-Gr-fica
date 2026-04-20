@@ -60,6 +60,10 @@ class Button:
 
         tex_id = glGenTextures(1)
         glBindTexture(GL_TEXTURE_2D, tex_id)
+        
+        # Garante alinhamento correto de memória para texturas de texto
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+        
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, text_data)
         
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
@@ -103,6 +107,8 @@ class Button:
         c = self.hover_color if self.is_hovered else self.base_color
         
         # 1. Desenha o Retângulo com transparência (glColor4f)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glDisable(GL_TEXTURE_2D)
         # Normalizamos para 0.0 - 1.0 dividindo por 255
         glColor4f(c[0]/255, c[1]/255, c[2]/255, c[3]/255)
@@ -161,6 +167,7 @@ class Title:
 
         tex_id = glGenTextures(1)
         glBindTexture(GL_TEXTURE_2D, tex_id)
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, text_data)
         
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
@@ -180,6 +187,8 @@ class Title:
     def draw(self):
         """Renderiza o título e seu fundo."""
         # 1. Desenha o Retângulo de fundo (caso queira uma faixa atrás do título)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glDisable(GL_TEXTURE_2D)
         glColor4f(self.bg_color[0] / 255, self.bg_color[1] / 255, 
                   self.bg_color[2] / 255, self.bg_color[3] / 255)

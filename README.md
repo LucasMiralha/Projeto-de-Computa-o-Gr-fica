@@ -12,11 +12,22 @@ Este repositório contém o código do jogo Lethal Ceti. O foco do projeto é a 
 * Save: Pasta destinada ao armazenamento local do progresso do jogador.
 
 ## Requisitos Prévios
-Para rodar o projeto, é necessário ter a linguagem Python configurada em sua máquina. Como o desenvolvimento explora programação gráfica, é recomendado instalar as bibliotecas fundamentais para o funcionamento do motor visual, como Pygame e PyOpenGL .
+Para rodar o projeto, é necessário ter a linguagem Python instalada e configurada em sua máquina. O jogo irá verificar automaticamente se as dependências necessárias estão instaladas e tentará instalá-las caso não estejam. Caso o jogo não consiga instalar as dependências automaticamente, instale-as manualmente utilizando o comando: "pip install pygame PyOpenGL numpy" ou "pip install -r requirements.txt"
 
 ## Instruções de Execução
 Abra o terminal em seu computador e navegue até a pasta raiz do repositório. Inicie o jogo executando o script principal através do comando abaixo:
 
 ```
-python "Tau Ceti Wars.py"
+python "Lethal Ceti.py"
 ```
+
+Ou simplesmente dê dois cliques no arquivo "Lethal Ceti.py" para executá-lo e iniciar o jogo.
+
+## Controles
+
+* W: mover para frente
+* S: mover para trás
+* A: mover para a esquerda
+* D: mover para a direita
+* E: interagir
+* ESC: menu de pausa

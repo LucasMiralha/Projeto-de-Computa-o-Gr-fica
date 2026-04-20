@@ -137,9 +137,9 @@ def load_game_resources(script_path:str, json_path: str, screen_width:int, scree
     else:
         print(" -> Textura 'anel.png' não encontrada")
     
-    background_image_path = os.path.join(pasta_backgrounds, 'fundo_espacial.png')
+    background_image_path = os.path.join(pasta_backgrounds, 'space_background2.png')
 
-    background_texture_id = load_background(background_image_path, screen_width, screen_height)
+    background_texture_id = load_texture(background_image_path)
 
     if background_texture_id:
         print(" -> Textura de fundo carregada com sucesso!")

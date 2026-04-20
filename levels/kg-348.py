@@ -6,7 +6,10 @@ from pygame.locals import *
 from OpenGL.GL import *
 from OpenGL.GLU import *
 
-from core.renderer import draw_cube, draw_floor_tile, draw_computer, draw_door, draw_sphere
+from core.renderer import (draw_cube, draw_floor_tile, draw_computer, 
+                           draw_door, draw_sphere, draw_stamina_bar, 
+                           draw_hud_interaction_prompt, draw_ui_text,
+                           draw_hud_objective)
 import core.ai as ai_module
 from core.physics_engine import BLOCK_SIZE, WALL_HEIGHT, is_wall
 from core.ui import Button, Title
@@ -115,6 +118,8 @@ def start(planet, saved_state=None):
     for i in range(min(2, len(doors_data))):
         doors_data[i]['is_open'] = True
 
+    total_to_repair = sum(1 for c in computers_data if c['is_broken'])
+
     collision_map = copy.deepcopy(current_map)
     for y_index, andar in enumerate(collision_map):
         for z_index, linha in enumerate(andar):
@@ -143,8 +148,13 @@ def start(planet, saved_state=None):
         player_y = saved_state.get('player_y', cam_y)
 
     mouse_sensitivity = 0.15
-    move_speed = 0.2
+    base_move_speed = 0.15
+    sprint_speed = 0.28
+    move_speed = base_move_speed
     player_radius = 0.5
+    stamina_max = 100.0
+    stamina = stamina_max
+    stamina_exhausted = False
     
     # --- UI DO PAUSE ---
     pygame.font.init()
@@ -168,6 +178,31 @@ def start(planet, saved_state=None):
     
     hud_font = pygame.font.SysFont("consolas", 24, bold=True)
 
+    # --- AUDIO SETUP ---
+    sound_enabled = True
+    sounds = {}
+    ch_player_steps = None
+    ch_sfx = None
+    current_player_steps = False
+    
+    try:
+        if not pygame.mixer.get_init():
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+        pygame.mixer.set_num_channels(16)
+        
+        sounds_dir = os.path.join(script_path, 'Assets', 'Sounds')
+        sounds["player_steps"] = pygame.mixer.Sound(os.path.join(sounds_dir, "kg_steps.mp3"))
+        sounds["repair_success"] = pygame.mixer.Sound(os.path.join(sounds_dir, "kg_computer_success.mp3"))
+        
+        ch_player_steps = pygame.mixer.Channel(4)
+        ch_sfx = pygame.mixer.Channel(5)
+        
+        sounds["player_steps"].set_volume(0.4)
+        sounds["repair_success"].set_volume(0.6)
+    except Exception as e:
+        print(f"Erro ao carregar os sons na fase: {e}")
+        sound_enabled = False
+
     running = True
     is_paused = False
     is_game_over = False
@@ -189,6 +224,7 @@ def start(planet, saved_state=None):
     ai_path = []
     ai_last_path_time = 0
     ai_state_timer = 0
+    prev_cam_x, prev_cam_z = cam_x, cam_z
 
     def cb_continuar():
         nonlocal is_paused
@@ -198,7 +234,8 @@ def start(planet, saved_state=None):
         pygame.mouse.get_rel()
         
     def cb_salvar_jogo():
-        save_manager.save_level_state(cam_x, cam_y, cam_z, player_y, yaw, pitch, planet.name)
+        save_manager.save_level_state(cam_x, cam_y, cam_z, player_y, yaw, pitch, planet.name,
+                                       extra_data={'stamina': stamina, 'stamina_exhausted': stamina_exhausted})
         cb_continuar()
         
     def cb_carregar_jogo():
@@ -416,7 +453,9 @@ def start(planet, saved_state=None):
                         if event.key == K_1:
                             near_comp_active['is_broken'] = False
                             fixed_computers += 1
-                            if fixed_computers >= 3 and final_zone_data:
+                            if sound_enabled and ch_sfx:
+                                ch_sfx.play(sounds["repair_success"])
+                            if fixed_computers >= total_to_repair and final_zone_data:
                                 # Abre a passagem pro jogador
                                 l = list(collision_map[final_zone_data['grid_y']][final_zone_data['grid_z']])
                                 l[final_zone_data['grid_x']] = '.'
@@ -463,6 +502,18 @@ def start(planet, saved_state=None):
             right_x = math.cos(yaw_rad)
             right_z = math.sin(yaw_rad)
             
+            # Stamina: mesma lógica de tau_ceti_iv
+            if stamina <= 0:
+                stamina_exhausted = True
+            if stamina_exhausted and stamina >= 50:
+                stamina_exhausted = False
+            if keys[K_LSHIFT] and stamina > 0 and not stamina_exhausted:
+                move_speed = sprint_speed
+                stamina = max(0.0, stamina - 0.6)
+            else:
+                move_speed = base_move_speed
+                stamina = min(stamina_max, stamina + 0.15)
+            
             next_x = cam_x
             next_z = cam_z
             
@@ -485,7 +536,24 @@ def start(planet, saved_state=None):
             if not is_wall(cam_x, cam_y, next_z + (player_radius if next_z > cam_z else -player_radius), collision_map):
                 cam_z = next_z
                 
-            if fixed_computers >= 3 and final_zone_data:
+            # --- AUDIO DE PASSOS ---
+            if sound_enabled and not is_victory and not is_game_over and not is_paused:
+                moved_dist = math.hypot(cam_x - prev_cam_x, cam_z - prev_cam_z)
+                if moved_dist > 0.01:
+                    if not current_player_steps:
+                        if ch_player_steps: ch_player_steps.play(sounds["player_steps"], loops=-1)
+                        current_player_steps = True
+                else:
+                    if current_player_steps:
+                        if ch_player_steps: ch_player_steps.stop()
+                        current_player_steps = False
+                prev_cam_x, prev_cam_z = cam_x, cam_z
+            else:
+                if current_player_steps:
+                    if ch_player_steps: ch_player_steps.stop()
+                    current_player_steps = False
+                
+            if fixed_computers >= total_to_repair and final_zone_data:
                 if math.hypot(cam_x - final_zone_data['x'], cam_z - final_zone_data['z']) < 2.0:
                     if not is_victory:
                         print("- VOCE CONCLUIU A MISSAO COM SUCESSO -")
@@ -596,7 +664,7 @@ def start(planet, saved_state=None):
                         block_y = y_index * WALL_HEIGHT
                         block_z = z_index * BLOCK_SIZE
                         
-                        if fixed_computers >= 3:
+                        if fixed_computers >= total_to_repair:
                             draw_door(block_x, block_y, block_z, 4.0, 4.0, color=(0.2, 0.8, 0.2)) # Porta Livre
                         else:
                             draw_door(block_x, block_y, block_z, 4.0, 4.0, color=(0.8, 0.2, 0.2)) # Porta Trancada
@@ -615,6 +683,14 @@ def start(planet, saved_state=None):
             glTranslatef(ai_pos_x, ai_pos_y + 1.5, ai_pos_z)
             draw_sphere(1.5, "#150020", None)
             glPopMatrix()
+
+        # Barra de stamina: canto inferior esquerdo
+        draw_stamina_bar(stamina, stamina_max, screen_width, screen_height, stamina_exhausted)
+
+        # Texto de objetivo: canto superior esquerdo
+        if not is_paused and not is_game_over and not is_victory:
+            obj_text = f"Computadores reparados: {fixed_computers}/{total_to_repair}"
+            draw_hud_objective(obj_text, screen_width, screen_height, hud_font)
 
         if is_game_over:
             prepare_2d(screen_width, screen_height)
@@ -712,25 +788,11 @@ def start(planet, saved_state=None):
             glEnd()
             
             if near_comp_active.get('is_broken', False):
-                title_surf = terminal_title_font.render("SISTEMA CORROMPIDO", True, (255, 100, 0))
-                tw, th = title_surf.get_size()
-                glRasterPos2f((screen_width - tw) // 2, screen_height // 2 - 250)
-                glDrawPixels(tw, th, GL_RGBA, GL_UNSIGNED_BYTE, pygame.image.tostring(title_surf, "RGBA", True))
-                
-                linha_surf = terminal_font.render("[1] EXECUTAR REPARO DO SISTEMA", True, (255, 255, 0))
-                lw, lh = linha_surf.get_size()
-                glRasterPos2f((screen_width - lw) // 2, screen_height // 2)
-                glDrawPixels(lw, lh, GL_RGBA, GL_UNSIGNED_BYTE, pygame.image.tostring(linha_surf, "RGBA", True))
-                
-                tip_surf = terminal_font.render("[ESC/E] ABANDONAR TERMINAL", True, (150, 150, 150))
-                tip_w, tip_h = tip_surf.get_size()
-                glRasterPos2f((screen_width - tip_w) // 2, screen_height // 2 + 250)
-                glDrawPixels(tip_w, tip_h, GL_RGBA, GL_UNSIGNED_BYTE, pygame.image.tostring(tip_surf, "RGBA", True))
+                draw_ui_text("SISTEMA CORROMPIDO", screen_width // 2, screen_height // 2 - 250, screen_width, screen_height, terminal_title_font, (255, 100, 0), align="center")
+                draw_ui_text("[1] EXECUTAR REPARO DO SISTEMA", screen_width // 2, screen_height // 2, screen_width, screen_height, terminal_font, (255, 255, 0), align="center")
+                draw_ui_text("[ESC/E] ABANDONAR TERMINAL", screen_width // 2, screen_height // 2 + 250, screen_width, screen_height, terminal_font, (150, 150, 150), align="center")
             else:
-                title_surf = terminal_title_font.render("SISTEMA DE CONTROLE", True, (0, 255, 0))
-                tw, th = title_surf.get_size()
-                glRasterPos2f((screen_width - tw) // 2, screen_height // 2 - 250)
-                glDrawPixels(tw, th, GL_RGBA, GL_UNSIGNED_BYTE, pygame.image.tostring(title_surf, "RGBA", True))
+                draw_ui_text("SISTEMA DE CONTROLE", screen_width // 2, screen_height // 2 - 250, screen_width, screen_height, terminal_title_font, (0, 255, 0), align="center")
                 
                 start_y = screen_height // 2 - 120
                 for i, d in enumerate(active_doors):
@@ -743,29 +805,19 @@ def start(planet, saved_state=None):
                     status_txt = "[ ABERTA  ]" if d['is_open'] else "[ FECHADA ]"
                     color = (50, 255, 50) if d['is_open'] else (255, 50, 50)
                     
-                    linha_surf = terminal_font.render(f"[{i+1}] {dir_name}   {status_txt}", True, color)
-                    lw, lh = linha_surf.get_size()
-                    glRasterPos2f(screen_width // 2 - 250, start_y + i * 50)
-                    glDrawPixels(lw, lh, GL_RGBA, GL_UNSIGNED_BYTE, pygame.image.tostring(linha_surf, "RGBA", True))
+                    draw_ui_text(f"[{i+1}] {dir_name}   {status_txt}", screen_width // 2 - 250, start_y + i * 50, screen_width, screen_height, terminal_font, color, align="left")
                     
-                tip_surf = terminal_font.render("[ESC/E] SAIR DO TERMINAL   [1-9] SELECIONAR", True, (100, 200, 100))
-                tip_w, tip_h = tip_surf.get_size()
-                glRasterPos2f((screen_width - tip_w) // 2, screen_height // 2 + 250)
-                glDrawPixels(tip_w, tip_h, GL_RGBA, GL_UNSIGNED_BYTE, pygame.image.tostring(tip_surf, "RGBA", True))
+                draw_ui_text("[ESC/E] SAIR DO TERMINAL   [1-9] SELECIONAR", screen_width // 2, screen_height // 2 + 250, screen_width, screen_height, terminal_font, (100, 200, 100), align="center")
                 
             prepare_3d()
             
         elif not is_paused and near_comp:
-            prepare_2d(screen_width, screen_height)
-            prompt_surf = hud_font.render("Aperte [E] para hackear portas", True, (255, 215, 120))
-            p_w, p_h = prompt_surf.get_size()
-            glEnable(GL_BLEND)
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-            glRasterPos2f((screen_width - p_w) // 2, screen_height - 100)
-            glDrawPixels(p_w, p_h, GL_RGBA, GL_UNSIGNED_BYTE, pygame.image.tostring(prompt_surf, "RGBA", True))
-            prepare_3d()
+            draw_hud_interaction_prompt("Aperte [E] para acessar computador", screen_width, screen_height, hud_font, (255,238,140))
             
         pygame.display.flip()
         clock.tick(FPS)
+        
+    if sound_enabled:
+        pygame.mixer.stop()
         
     return result_state
