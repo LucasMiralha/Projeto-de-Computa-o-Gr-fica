@@ -7,7 +7,7 @@ Este repositório contém o código do jogo Lethal Ceti. O foco do projeto é a 
 * Assets: Pasta com os recursos visuais e sonoros da aplicação, englobando texturas de planetas, fundos espaciais, artes e efeitos de áudio.
 * core: Diretório que abriga a base do motor do jogo. Inclui os utilitários gráficos, regras de física, inteligência artificial, renderizador e o gerenciamento de progresso.
 * levels: Contém os scripts que definem a lógica e a construção das fases individuais do jogo.
-* Tau Ceti Wars.py: O arquivo principal responsável por iniciar a aplicação.
+* Lethal Ceti.py: O arquivo principal responsável por iniciar a aplicação.
 * planetas.json: Arquivo estruturado com as configurações e os dados dos planetas disponíveis.
 * Save: Pasta destinada ao armazenamento local do progresso do jogador.
 
